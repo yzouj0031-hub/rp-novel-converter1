@@ -635,6 +635,19 @@ summary:focus-visible,
   background: var(--vermilion-wash);
 }
 
+.preset-item-badge.is-incompatible,
+.preset-item-badge.is-visual,
+.preset-item-badge.is-context,
+.preset-item-badge.is-invalid {
+  color: #6e6254;
+  background: #e7ded1;
+}
+
+.preset-item-badge.is-active {
+  color: #496344;
+  background: #e1eadc;
+}
+
 .preset-note {
   margin: 10px 0 0;
   font-size: 0.72rem;
