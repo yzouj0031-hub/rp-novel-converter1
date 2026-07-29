@@ -29,7 +29,7 @@ function splitLongText(text, limit) {
   return pieces;
 }
 
-export function normalizeChatEndpoint(baseUrl) {
+function parseApiUrl(baseUrl) {
   const raw = String(baseUrl || "").trim();
   if (!raw) throw new Error("请填写 API Base URL。");
 
@@ -50,9 +50,26 @@ export function normalizeChatEndpoint(baseUrl) {
   url.hash = "";
   url.search = "";
   url.pathname = url.pathname.replace(/\/+$/, "");
+  return url;
+}
 
+export function normalizeChatEndpoint(baseUrl) {
+  const url = parseApiUrl(baseUrl);
+  if (url.pathname.endsWith("/models")) {
+    url.pathname = url.pathname.replace(/\/models$/, "/chat/completions");
+  }
   if (!url.pathname.endsWith("/chat/completions")) {
     url.pathname = `${url.pathname}/chat/completions`.replace(/\/{2,}/g, "/");
+  }
+  return url.toString();
+}
+
+export function normalizeModelsEndpoint(baseUrl) {
+  const url = parseApiUrl(baseUrl);
+  if (url.pathname.endsWith("/chat/completions")) {
+    url.pathname = url.pathname.replace(/\/chat\/completions$/, "/models");
+  } else if (!url.pathname.endsWith("/models")) {
+    url.pathname = `${url.pathname}/models`.replace(/\/{2,}/g, "/");
   }
   return url.toString();
 }
@@ -147,6 +164,25 @@ export function extractChatCompletionText(payload) {
   throw new Error("接口返回成功，但没有找到可用的文本内容。");
 }
 
+export function extractModelIds(payload) {
+  const candidates = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.models)
+        ? payload.models
+        : [];
+  const ids = candidates
+    .map((item) => {
+      if (typeof item === "string") return item;
+      return item?.id || item?.name || item?.model;
+    })
+    .filter((id) => typeof id === "string" && id.trim())
+    .map((id) => id.trim());
+
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
 function apiErrorMessage(payload, status) {
   const message =
     payload?.error?.message || payload?.message || payload?.detail || payload?.error;
@@ -187,4 +223,36 @@ export async function requestChatCompletion(config, messages, requestOptions = {
 
   if (!response.ok) throw new Error(apiErrorMessage(payload, response.status));
   return extractChatCompletionText(payload);
+}
+
+export async function requestModelList(config, requestOptions = {}) {
+  const endpoint = normalizeModelsEndpoint(config.baseUrl);
+  const headers = {};
+  if (config.apiKey?.trim()) headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+
+  let response;
+  try {
+    response = await (requestOptions.fetchImpl || fetch)(endpoint, {
+      method: "GET",
+      headers,
+      signal: requestOptions.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw new Error(
+      "无法拉取模型。请检查 Base URL，并确认中转或反代允许浏览器跨域访问（CORS）。",
+    );
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    // Some proxies return an empty or non-JSON error body.
+  }
+
+  if (!response.ok) throw new Error(apiErrorMessage(payload, response.status));
+  const models = extractModelIds(payload);
+  if (!models.length) throw new Error("接口已响应，但没有返回可识别的模型列表。");
+  return models;
 }
