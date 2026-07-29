@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#f3ebdd" />
     <title>戏匣｜酒馆 RP 聊天转文本</title>
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=6" />
   </head>
   <body>
     <div class="page-shell">
@@ -194,12 +194,18 @@
                     应用预设中的成人向写作项（能否生成仍取决于所用模型与接口）
                   </span>
                 </label>
+                <label class="compact-check preset-sensitive-row" id="preset-regex-row" hidden>
+                  <input id="apply-preset-regex" type="checkbox" />
+                  <span>
+                    应用预设中的兼容文本正则（预处理聊天正文，并清理模型输出）
+                  </span>
+                </label>
                 <details class="preset-details">
                   <summary>查看导入与过滤结果</summary>
                   <ul id="preset-items"></ul>
                 </details>
                 <p class="preset-note">
-                  破限、反系统、思维链及动态占位项不会发送给模型；预设只作为小说文风参考。
+                  会执行纯文本正则；HTML 美化和“删除历史消息”类正则会跳过，以免正文出现网页代码或丢失剧情。
                 </p>
               </div>
               <label class="wide-field">
@@ -294,6 +300,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=5"></script>
+    <script type="module" src="./app.js?v=6"></script>
   </body>
 </html>
