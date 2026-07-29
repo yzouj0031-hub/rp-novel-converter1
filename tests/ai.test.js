@@ -5,8 +5,11 @@ import {
   buildNovelMessages,
   createTranscriptChunks,
   extractChatCompletionText,
+  extractModelIds,
   normalizeChatEndpoint,
+  normalizeModelsEndpoint,
   requestChatCompletion,
+  requestModelList,
 } from "../ai.js";
 
 test("normalizes OpenAI-compatible base URLs", () => {
@@ -20,6 +23,10 @@ test("normalizes OpenAI-compatible base URLs", () => {
   );
   assert.throws(() => normalizeChatEndpoint(""), /Base URL/);
   assert.throws(() => normalizeChatEndpoint("file:///tmp/api"), /http/);
+  assert.equal(
+    normalizeModelsEndpoint("https://example.com/v1/chat/completions"),
+    "https://example.com/v1/models",
+  );
 });
 
 test("chunks transcripts without dropping messages", () => {
@@ -61,6 +68,16 @@ test("extracts text from compatible completion payloads", () => {
   assert.throws(() => extractChatCompletionText({ choices: [] }), /文本/);
 });
 
+test("extracts and sorts compatible model lists", () => {
+  assert.deepEqual(
+    extractModelIds({
+      data: [{ id: "model-b" }, { id: "model-a" }, { id: "model-a" }],
+    }),
+    ["model-a", "model-b"],
+  );
+  assert.deepEqual(extractModelIds({ models: ["z", { name: "a" }] }), ["a", "z"]);
+});
+
 test("sends a compatible chat completions request", async () => {
   let request;
   const output = await requestChatCompletion(
@@ -88,4 +105,27 @@ test("sends a compatible chat completions request", async () => {
   assert.equal(request.options.headers.Authorization, "Bearer test-key");
   assert.equal(JSON.parse(request.options.body).model, "example-model");
   assert.equal(output, "完成");
+});
+
+test("fetches models with the configured authorization", async () => {
+  let request;
+  const models = await requestModelList(
+    {
+      baseUrl: "https://proxy.example/v1/chat/completions",
+      apiKey: "test-key",
+    },
+    {
+      fetchImpl: async (url, options) => {
+        request = { url, options };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ data: [{ id: "model-b" }, { id: "model-a" }] }),
+        };
+      },
+    },
+  );
+  assert.equal(request.url, "https://proxy.example/v1/models");
+  assert.equal(request.options.headers.Authorization, "Bearer test-key");
+  assert.deepEqual(models, ["model-a", "model-b"]);
 });
