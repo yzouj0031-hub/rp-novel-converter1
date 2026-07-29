@@ -5,6 +5,11 @@ import {
   requestModelList,
 } from "./ai.js";
 import { cleanText, parseChatExport, renderChat } from "./parser.js";
+import {
+  compilePresetPrompt,
+  parseSillyTavernPreset,
+  presetEntrySummary,
+} from "./preset.js";
 
 const API_SESSION_KEY = "rp-novel-converter-api-config";
 
@@ -29,6 +34,15 @@ const elements = {
   fetchModels: document.querySelector("#fetch-models"),
   aiStyle: document.querySelector("#ai-style"),
   aiCustomPrompt: document.querySelector("#ai-custom-prompt"),
+  presetInput: document.querySelector("#preset-input"),
+  importPreset: document.querySelector("#import-preset"),
+  presetSummary: document.querySelector("#preset-summary"),
+  presetName: document.querySelector("#preset-name"),
+  presetStats: document.querySelector("#preset-stats"),
+  presetItems: document.querySelector("#preset-items"),
+  presetSensitiveRow: document.querySelector("#preset-sensitive-row"),
+  includeSensitivePreset: document.querySelector("#include-sensitive-preset"),
+  removePreset: document.querySelector("#remove-preset"),
   rememberApiConfig: document.querySelector("#remember-api-config"),
   apiConsent: document.querySelector("#api-consent"),
   conversionProgress: document.querySelector("#conversion-progress"),
@@ -53,6 +67,7 @@ const elements = {
 let currentChat = null;
 let currentOutput = null;
 let activeController = null;
+let currentPreset = null;
 
 function showError(message = "") {
   elements.errorMessage.textContent = message;
@@ -117,6 +132,67 @@ function syncModeUi() {
       : currentOutput
         ? "重新转换"
         : "开始转换";
+  }
+}
+
+function renderPresetSummary() {
+  const preset = currentPreset;
+  elements.presetSummary.hidden = !preset;
+  if (!preset) return;
+
+  elements.presetName.textContent = preset.name;
+  const activeCount =
+    preset.safeCount +
+    (elements.includeSensitivePreset.checked ? preset.sensitiveCount : 0);
+  elements.presetStats.textContent =
+    `${activeCount} 项已应用 · ${preset.blockedCount} 项已过滤` +
+    (preset.sensitiveCount
+      ? ` · ${preset.sensitiveCount} 项成人向${elements.includeSensitivePreset.checked ? "已启用" : "未启用"}`
+      : "");
+  elements.presetSensitiveRow.hidden = !preset.sensitiveCount;
+
+  const labels = {
+    safe: "已应用",
+    sensitive: elements.includeSensitivePreset.checked ? "已应用" : "未启用",
+    blocked: "已过滤",
+  };
+  elements.presetItems.replaceChildren(
+    ...presetEntrySummary(preset).map((item) => {
+      const row = document.createElement("li");
+      const name = document.createElement("span");
+      const badge = document.createElement("span");
+      name.textContent = item.name;
+      badge.textContent = labels[item.category];
+      badge.className = `preset-item-badge is-${item.category}`;
+      row.append(name, badge);
+      return row;
+    }),
+  );
+}
+
+async function loadPreset(file) {
+  if (!file) return;
+  if (!/\.json$/i.test(file.name)) {
+    showError("请选择酒馆导出的 .json 预设文件。");
+    return;
+  }
+
+  showError();
+  elements.importPreset.disabled = true;
+  elements.importPreset.textContent = "正在读取…";
+  try {
+    currentPreset = parseSillyTavernPreset(await file.text(), file.name);
+    elements.includeSensitivePreset.checked = false;
+    renderPresetSummary();
+    showToast(`已导入预设：${currentPreset.name}`);
+  } catch (error) {
+    currentPreset = null;
+    renderPresetSummary();
+    showError(error instanceof Error ? `预设导入失败：${error.message}` : "预设导入失败。");
+  } finally {
+    elements.importPreset.disabled = false;
+    elements.importPreset.textContent = "导入酒馆预设";
+    elements.presetInput.value = "";
   }
 }
 
@@ -281,6 +357,15 @@ async function convertWithAi() {
       chunkCount: chunks.length,
       style: config.style,
       customPrompt: config.customPrompt,
+      presetPrompt: compilePresetPrompt(currentPreset, {
+        includeSensitive: elements.includeSensitivePreset.checked,
+        userName:
+          elements.userAlias.value ||
+          currentChat.metadata.userName,
+        characterName:
+          elements.characterAlias.value ||
+          currentChat.metadata.characterName,
+      }),
       continuity: results[index - 1]?.slice(-700) || "",
     });
     const text = await requestChatCompletion(config, messages, {
@@ -353,6 +438,17 @@ elements.fileInput.addEventListener("change", (event) => loadFile(event.target.f
 elements.replaceFile.addEventListener("click", () => elements.fileInput.click());
 elements.convertButton.addEventListener("click", convert);
 elements.fetchModels.addEventListener("click", fetchAvailableModels);
+elements.importPreset.addEventListener("click", () => elements.presetInput.click());
+elements.presetInput.addEventListener("change", (event) =>
+  loadPreset(event.target.files?.[0]),
+);
+elements.includeSensitivePreset.addEventListener("change", renderPresetSummary);
+elements.removePreset.addEventListener("click", () => {
+  currentPreset = null;
+  elements.includeSensitivePreset.checked = false;
+  renderPresetSummary();
+  showToast("已移除预设");
+});
 elements.cancelConversion.addEventListener("click", () => activeController?.abort());
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", syncModeUi);
