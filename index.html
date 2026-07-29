@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#f3ebdd" />
     <title>戏匣｜酒馆 RP 聊天转文本</title>
-    <link rel="stylesheet" href="./styles.css?v=2" />
+    <link rel="stylesheet" href="./styles.css?v=3" />
   </head>
   <body>
     <div class="page-shell">
@@ -68,6 +68,10 @@
                 <input type="radio" name="mode" value="novel" />
                 <span>小说排版</span>
               </label>
+              <label>
+                <input type="radio" name="mode" value="ai" />
+                <span>AI 小说化</span>
+              </label>
             </div>
           </fieldset>
 
@@ -106,6 +110,92 @@
               </label>
             </div>
           </details>
+
+          <section class="ai-config" id="ai-config" hidden aria-labelledby="ai-config-title">
+            <div class="ai-config-heading">
+              <div>
+                <p class="eyebrow">OPENAI-COMPATIBLE API</p>
+                <h3 id="ai-config-title">中转 / 反代设置</h3>
+              </div>
+              <span class="session-badge">仅本标签页</span>
+            </div>
+
+            <div class="api-grid">
+              <label class="wide-field">
+                <span>API Base URL</span>
+                <input
+                  id="api-base-url"
+                  type="url"
+                  inputmode="url"
+                  autocomplete="off"
+                  placeholder="例如：https://your-api.example.com/v1"
+                />
+                <small>也可直接填写以 /chat/completions 结尾的完整地址</small>
+              </label>
+              <label>
+                <span>API Key</span>
+                <input
+                  id="api-key"
+                  type="password"
+                  autocomplete="off"
+                  placeholder="无鉴权反代可留空"
+                />
+              </label>
+              <label>
+                <span>模型名</span>
+                <input
+                  id="api-model"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="填写服务商提供的模型名"
+                />
+              </label>
+              <label>
+                <span>改写风格</span>
+                <select id="ai-style">
+                  <option value="literary">文学细腻</option>
+                  <option value="concise">简洁克制</option>
+                  <option value="light">轻小说</option>
+                  <option value="suspense">悬疑冷峻</option>
+                </select>
+              </label>
+              <label class="wide-field">
+                <span>附加要求（可选）</span>
+                <textarea
+                  id="ai-custom-prompt"
+                  rows="3"
+                  placeholder="例如：第三人称、保留原对白、不增加心理活动"
+                ></textarea>
+              </label>
+            </div>
+
+            <label class="compact-check">
+              <input id="remember-api-config" type="checkbox" checked />
+              <span>在当前标签页记住接口设置</span>
+            </label>
+
+            <label class="consent-check">
+              <input id="api-consent" type="checkbox" />
+              <span>
+                我知道聊天正文会发送到上面填写的接口；请自行确认中转服务的隐私政策。
+              </span>
+            </label>
+
+            <p class="cors-note">
+              如果提示无法连接，通常是反代没有允许浏览器跨域请求（CORS）。
+            </p>
+          </section>
+
+          <div class="conversion-progress" id="conversion-progress" hidden>
+            <div class="progress-copy">
+              <strong id="progress-label">正在准备</strong>
+              <span id="progress-detail"></span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <span id="progress-bar"></span>
+            </div>
+            <button type="button" class="text-button" id="cancel-conversion">取消</button>
+          </div>
 
           <p class="error-message" id="error-message" role="alert" hidden></p>
 
@@ -149,7 +239,7 @@
       </main>
 
       <footer class="site-footer">
-        <p>本工具不会联网读取或保存聊天内容。</p>
+        <p>本地模式不联网；AI 模式只会把正文发送到你填写的接口。</p>
         <a
           href="https://github.com/yzouj0031-hub/rp-novel-converter1"
           target="_blank"
@@ -161,6 +251,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=2"></script>
+    <script type="module" src="./app.js?v=3"></script>
   </body>
 </html>
