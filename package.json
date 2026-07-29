@@ -1,0 +1,15 @@
+{
+  "name": "rp-novel-converter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "node --test",
+    "check": "node --check app.js && node --check parser.js && node --test"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}
