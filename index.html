@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#f3ebdd" />
     <title>戏匣｜酒馆 RP 聊天转文本</title>
-    <link rel="stylesheet" href="./styles.css?v=3" />
+    <link rel="stylesheet" href="./styles.css?v=4" />
   </head>
   <body>
     <div class="page-shell">
@@ -141,15 +141,23 @@
                   placeholder="无鉴权反代可留空"
                 />
               </label>
-              <label>
+              <div class="api-field">
                 <span>模型名</span>
-                <input
-                  id="api-model"
-                  type="text"
-                  autocomplete="off"
-                  placeholder="填写服务商提供的模型名"
-                />
-              </label>
+                <div class="model-input-row">
+                  <input
+                    id="api-model"
+                    type="text"
+                    list="model-options"
+                    autocomplete="off"
+                    aria-label="模型名"
+                    placeholder="手动填写或拉取模型"
+                  />
+                  <button type="button" class="fetch-models-button" id="fetch-models">
+                    拉取模型
+                  </button>
+                </div>
+                <datalist id="model-options"></datalist>
+              </div>
               <label>
                 <span>改写风格</span>
                 <select id="ai-style">
@@ -251,6 +259,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=3"></script>
+    <script type="module" src="./app.js?v=4"></script>
   </body>
 </html>
