@@ -86,16 +86,23 @@ export function createTranscriptChunks(chat, options = {}) {
     current = "";
   };
 
-  chat.messages
-    .filter((message) => message.role !== "system")
-    .forEach((message) => {
+  const messages = chat.messages.filter((message) => message.role !== "system");
+  messages.forEach((message, index) => {
       const speaker =
         message.role === "user" && options.userAlias?.trim()
           ? options.userAlias.trim()
           : message.role === "character" && options.characterAlias?.trim()
             ? options.characterAlias.trim()
             : message.speaker;
-      const cleaned = clean(message.text, { removeOoc });
+      const transformed =
+        typeof options.transformMessage === "function"
+          ? options.transformMessage(message.text, {
+              message,
+              index,
+              depth: messages.length - index - 1,
+            })
+          : message.text;
+      const cleaned = clean(transformed, { removeOoc });
       if (!cleaned) return;
 
       const block = `【${speaker || "角色"}】\n${cleaned}`;
