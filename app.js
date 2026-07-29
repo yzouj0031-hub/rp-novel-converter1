@@ -6,9 +6,11 @@ import {
 } from "./ai.js";
 import { cleanText, parseChatExport, renderChat } from "./parser.js";
 import {
+  applyPresetRegex,
   compilePresetPrompt,
   parseSillyTavernPreset,
   presetEntrySummary,
+  presetRegexSummary,
 } from "./preset.js";
 
 const API_SESSION_KEY = "rp-novel-converter-api-config";
@@ -42,6 +44,8 @@ const elements = {
   presetItems: document.querySelector("#preset-items"),
   presetSensitiveRow: document.querySelector("#preset-sensitive-row"),
   includeSensitivePreset: document.querySelector("#include-sensitive-preset"),
+  presetRegexRow: document.querySelector("#preset-regex-row"),
+  applyPresetRegexInput: document.querySelector("#apply-preset-regex"),
   removePreset: document.querySelector("#remove-preset"),
   rememberApiConfig: document.querySelector("#remember-api-config"),
   apiConsent: document.querySelector("#api-consent"),
@@ -146,18 +150,32 @@ function renderPresetSummary() {
     (elements.includeSensitivePreset.checked ? preset.sensitiveCount : 0);
   elements.presetStats.textContent =
     `${activeCount} 项已应用 · ${preset.blockedCount} 项已过滤` +
+    (preset.incompatibleCount ? ` · ${preset.incompatibleCount} 项格式指令未采用` : "") +
     (preset.sensitiveCount
       ? ` · ${preset.sensitiveCount} 项成人向${elements.includeSensitivePreset.checked ? "已启用" : "未启用"}`
+      : "") +
+    (preset.regexActiveCount
+      ? ` · ${preset.regexActiveCount} 条文本正则${elements.applyPresetRegexInput.checked ? "已启用" : "未启用"}`
       : "");
   elements.presetSensitiveRow.hidden = !preset.sensitiveCount;
+  elements.presetRegexRow.hidden = !preset.regexActiveCount;
 
   const labels = {
     safe: "已应用",
     sensitive: elements.includeSensitivePreset.checked ? "已应用" : "未启用",
     blocked: "已过滤",
+    incompatible: "不适用",
+    active: elements.applyPresetRegexInput.checked ? "正则启用" : "正则未启用",
+    visual: "跳过美化",
+    context: "跳过裁剪",
+    invalid: "正则无效",
   };
+  const items = [
+    ...presetEntrySummary(preset),
+    ...presetRegexSummary(preset),
+  ];
   elements.presetItems.replaceChildren(
-    ...presetEntrySummary(preset).map((item) => {
+    ...items.map((item) => {
       const row = document.createElement("li");
       const name = document.createElement("span");
       const badge = document.createElement("span");
@@ -183,6 +201,7 @@ async function loadPreset(file) {
   try {
     currentPreset = parseSillyTavernPreset(await file.text(), file.name);
     elements.includeSensitivePreset.checked = false;
+    elements.applyPresetRegexInput.checked = currentPreset.regexActiveCount > 0;
     renderPresetSummary();
     showToast(`已导入预设：${currentPreset.name}`);
   } catch (error) {
@@ -335,11 +354,27 @@ async function convertWithAi() {
   }
 
   rememberApiConfig(config);
+  const presetOptions = {
+    enabled: elements.applyPresetRegexInput.checked,
+    userName:
+      elements.userAlias.value ||
+      currentChat.metadata.userName,
+    characterName:
+      elements.characterAlias.value ||
+      currentChat.metadata.characterName,
+  };
   const chunks = createTranscriptChunks(currentChat, {
     removeOoc: elements.removeOoc.checked,
     userAlias: elements.userAlias.value,
     characterAlias: elements.characterAlias.value,
     cleanText,
+    transformMessage: (text, { message, depth }) =>
+      applyPresetRegex(text, currentPreset, {
+        ...presetOptions,
+        placement: message.role === "user" ? 1 : 2,
+        phase: "prompt",
+        depth,
+      }),
   });
   if (!chunks.length) throw new Error("没有可发送的聊天正文。");
 
@@ -368,9 +403,15 @@ async function convertWithAi() {
       }),
       continuity: results[index - 1]?.slice(-700) || "",
     });
-    const text = await requestChatCompletion(config, messages, {
+    const rawText = await requestChatCompletion(config, messages, {
       signal: activeController.signal,
     });
+    const text = applyPresetRegex(rawText, currentPreset, {
+      ...presetOptions,
+      placement: 2,
+      phase: "output",
+      depth: 0,
+    }).trim();
     results.push(text);
     setProgress(index + 1, chunks.length, `第 ${index + 1} 段已完成`);
   }
@@ -443,9 +484,11 @@ elements.presetInput.addEventListener("change", (event) =>
   loadPreset(event.target.files?.[0]),
 );
 elements.includeSensitivePreset.addEventListener("change", renderPresetSummary);
+elements.applyPresetRegexInput.addEventListener("change", renderPresetSummary);
 elements.removePreset.addEventListener("click", () => {
   currentPreset = null;
   elements.includeSensitivePreset.checked = false;
+  elements.applyPresetRegexInput.checked = false;
   renderPresetSummary();
   showToast("已移除预设");
 });
