@@ -471,7 +471,8 @@ summary:focus-visible,
   gap: 14px;
 }
 
-.api-grid label {
+.api-grid label,
+.api-field {
   display: grid;
   gap: 7px;
   color: var(--muted);
@@ -485,6 +486,35 @@ summary:focus-visible,
 
 .wide-field {
   grid-column: 1 / -1;
+}
+
+.model-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.fetch-models-button {
+  cursor: pointer;
+  border: 1px solid var(--vermilion);
+  border-radius: 7px;
+  padding: 0 13px;
+  color: var(--vermilion);
+  background: rgba(255, 252, 246, 0.72);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: 150ms ease-out;
+}
+
+.fetch-models-button:hover:not(:disabled) {
+  color: #fffaf1;
+  background: var(--vermilion);
+}
+
+.fetch-models-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
 }
 
 .compact-check,
