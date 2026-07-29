@@ -1,4 +1,11 @@
-import { parseChatExport, renderChat } from "./parser.js";
+import {
+  buildNovelMessages,
+  createTranscriptChunks,
+  requestChatCompletion,
+} from "./ai.js";
+import { cleanText, parseChatExport, renderChat } from "./parser.js";
+
+const API_SESSION_KEY = "rp-novel-converter-api-config";
 
 const elements = {
   fileInput: document.querySelector("#file-input"),
@@ -13,6 +20,19 @@ const elements = {
   storyTitle: document.querySelector("#story-title"),
   userAlias: document.querySelector("#user-alias"),
   characterAlias: document.querySelector("#character-alias"),
+  aiConfig: document.querySelector("#ai-config"),
+  apiBaseUrl: document.querySelector("#api-base-url"),
+  apiKey: document.querySelector("#api-key"),
+  apiModel: document.querySelector("#api-model"),
+  aiStyle: document.querySelector("#ai-style"),
+  aiCustomPrompt: document.querySelector("#ai-custom-prompt"),
+  rememberApiConfig: document.querySelector("#remember-api-config"),
+  apiConsent: document.querySelector("#api-consent"),
+  conversionProgress: document.querySelector("#conversion-progress"),
+  progressLabel: document.querySelector("#progress-label"),
+  progressDetail: document.querySelector("#progress-detail"),
+  progressBar: document.querySelector("#progress-bar"),
+  cancelConversion: document.querySelector("#cancel-conversion"),
   convertButton: document.querySelector("#convert-button"),
   errorMessage: document.querySelector("#error-message"),
   previewEmpty: document.querySelector("#preview-empty"),
@@ -29,6 +49,7 @@ const elements = {
 
 let currentChat = null;
 let currentOutput = null;
+let activeController = null;
 
 function showError(message = "") {
   elements.errorMessage.textContent = message;
@@ -46,6 +67,54 @@ function showToast(message) {
 
 function currentMode() {
   return document.querySelector('input[name="mode"]:checked')?.value || "faithful";
+}
+
+function restoreApiConfig() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(API_SESSION_KEY) || "null");
+    if (!stored) return;
+    elements.apiBaseUrl.value = stored.baseUrl || "";
+    elements.apiKey.value = stored.apiKey || "";
+    elements.apiModel.value = stored.model || "";
+    elements.aiStyle.value = stored.style || "literary";
+    elements.aiCustomPrompt.value = stored.customPrompt || "";
+  } catch {
+    sessionStorage.removeItem(API_SESSION_KEY);
+  }
+}
+
+function apiConfig() {
+  return {
+    baseUrl: elements.apiBaseUrl.value.trim(),
+    apiKey: elements.apiKey.value,
+    model: elements.apiModel.value.trim(),
+    style: elements.aiStyle.value,
+    customPrompt: elements.aiCustomPrompt.value.trim(),
+  };
+}
+
+function rememberApiConfig(config) {
+  try {
+    if (elements.rememberApiConfig.checked) {
+      sessionStorage.setItem(API_SESSION_KEY, JSON.stringify(config));
+    } else {
+      sessionStorage.removeItem(API_SESSION_KEY);
+    }
+  } catch {
+    // Private browsing modes may block session storage; conversion can continue.
+  }
+}
+
+function syncModeUi() {
+  const isAi = currentMode() === "ai";
+  elements.aiConfig.hidden = !isAi;
+  if (!elements.convertButton.classList.contains("is-working")) {
+    elements.convertButton.querySelector("span").textContent = isAi
+      ? "开始 AI 小说化"
+      : currentOutput
+        ? "重新转换"
+        : "开始转换";
+  }
 }
 
 async function loadFile(file) {
@@ -85,54 +154,141 @@ async function loadFile(file) {
   }
 }
 
-function convert() {
-  if (!currentChat) return;
+function displayOutput(output, message = "转换完成，结果已生成") {
+  currentOutput = output;
+  elements.manuscriptTitle.textContent = output.title;
+  elements.previewText.textContent = output.body;
+  elements.previewEmpty.hidden = true;
+  elements.manuscript.hidden = false;
+  elements.previewActions.hidden = false;
+  elements.outputStats.textContent =
+    `${output.messageCount} 条消息 · ${output.characterCount.toLocaleString("zh-CN")} 字符`;
+  elements.manuscript.classList.remove("reveal");
+
+  requestAnimationFrame(() => {
+    elements.manuscript.classList.add("reveal");
+    document.querySelector(".preview-card").scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "start",
+    });
+  });
+  showToast(message);
+}
+
+function setProgress(current, total, label) {
+  elements.progressLabel.textContent = label;
+  elements.progressDetail.textContent = total ? `${current} / ${total}` : "";
+  elements.progressBar.style.width = total ? `${Math.round((current / total) * 100)}%` : "0%";
+}
+
+function setWorking(working, label = "正在整理") {
+  elements.convertButton.classList.toggle("is-working", working);
+  elements.convertButton.disabled = working || !currentChat;
+  elements.convertButton.querySelector("span").textContent = working
+    ? label
+    : currentMode() === "ai"
+      ? "开始 AI 小说化"
+      : currentOutput
+        ? "重新转换"
+        : "开始转换";
+}
+
+async function convertLocally() {
+  setWorking(true);
+  await new Promise((resolve) => window.setTimeout(resolve, 120));
+  const output = renderChat(currentChat, {
+    mode: currentMode(),
+    removeTimestamps: elements.removeTimestamps.checked,
+    removeOoc: elements.removeOoc.checked,
+    title: elements.storyTitle.value,
+    userAlias: elements.userAlias.value,
+    characterAlias: elements.characterAlias.value,
+  });
+  displayOutput(output);
+}
+
+async function convertWithAi() {
+  const config = apiConfig();
+  if (!config.baseUrl) throw new Error("请填写 API Base URL。");
+  if (!config.model) throw new Error("请填写模型名。");
+  if (!elements.apiConsent.checked) {
+    throw new Error("请先确认聊天正文将发送到你填写的接口。");
+  }
+
+  rememberApiConfig(config);
+  const chunks = createTranscriptChunks(currentChat, {
+    removeOoc: elements.removeOoc.checked,
+    userAlias: elements.userAlias.value,
+    characterAlias: elements.characterAlias.value,
+    cleanText,
+  });
+  if (!chunks.length) throw new Error("没有可发送的聊天正文。");
+
+  activeController = new AbortController();
+  elements.conversionProgress.hidden = false;
+  setProgress(0, chunks.length, "正在连接接口");
+  setWorking(true, "AI 正在改写");
+
+  const results = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    setProgress(index, chunks.length, `正在改写第 ${index + 1} 段`);
+    const messages = buildNovelMessages({
+      chunk: chunks[index],
+      chunkIndex: index,
+      chunkCount: chunks.length,
+      style: config.style,
+      customPrompt: config.customPrompt,
+      continuity: results[index - 1]?.slice(-700) || "",
+    });
+    const text = await requestChatCompletion(config, messages, {
+      signal: activeController.signal,
+    });
+    results.push(text);
+    setProgress(index + 1, chunks.length, `第 ${index + 1} 段已完成`);
+  }
+
+  const title = elements.storyTitle.value.trim() || currentChat.title || "未命名故事";
+  const body = results.join("\n\n");
+  displayOutput(
+    {
+      title,
+      body,
+      text: `${title}\n${"—".repeat(Math.min(12, Math.max(4, title.length)))}\n\n${body}`,
+      markdown: `# ${title}\n\n${body}\n`,
+      messageCount: currentChat.messages.length,
+      characterCount: body.length,
+    },
+    `AI 小说化完成，共处理 ${chunks.length} 段`,
+  );
+}
+
+async function convert() {
+  if (!currentChat || activeController) return;
   showError();
-  elements.convertButton.classList.add("is-working");
-  elements.convertButton.querySelector("span").textContent = "正在整理";
 
-  window.setTimeout(() => {
-    try {
-      currentOutput = renderChat(currentChat, {
-        mode: currentMode(),
-        removeTimestamps: elements.removeTimestamps.checked,
-        removeOoc: elements.removeOoc.checked,
-        title: elements.storyTitle.value,
-        userAlias: elements.userAlias.value,
-        characterAlias: elements.characterAlias.value,
-      });
-
-      elements.manuscriptTitle.textContent = currentOutput.title;
-      elements.previewText.textContent = currentOutput.body;
-      elements.previewEmpty.hidden = true;
-      elements.manuscript.hidden = false;
-      elements.previewActions.hidden = false;
-      elements.outputStats.textContent =
-        `${currentOutput.messageCount} 条消息 · ${currentOutput.characterCount.toLocaleString("zh-CN")} 字符`;
-      elements.convertButton.querySelector("span").textContent = "重新转换";
-      elements.manuscript.classList.remove("reveal");
-      requestAnimationFrame(() => {
-        elements.manuscript.classList.add("reveal");
-        document.querySelector(".preview-card").scrollIntoView({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-            ? "auto"
-            : "smooth",
-          block: "start",
-        });
-      });
-      showToast("转换完成，结果已生成");
-    } catch (error) {
-      currentOutput = null;
+  try {
+    if (currentMode() === "ai") {
+      await convertWithAi();
+    } else {
+      await convertLocally();
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      showToast("已取消 AI 改写");
+    } else {
       showError(
         error instanceof Error
           ? `转换失败：${error.message}`
-          : "转换失败，请换一个导出文件重试。",
+          : "转换失败，请检查接口设置后重试。",
       );
-      elements.convertButton.querySelector("span").textContent = "重新尝试";
-    } finally {
-      elements.convertButton.classList.remove("is-working");
     }
-  }, 180);
+  } finally {
+    activeController = null;
+    elements.conversionProgress.hidden = true;
+    setWorking(false);
+  }
 }
 
 function safeFileName(value) {
@@ -155,6 +311,10 @@ function download(content, extension, mimeType) {
 elements.fileInput.addEventListener("change", (event) => loadFile(event.target.files?.[0]));
 elements.replaceFile.addEventListener("click", () => elements.fileInput.click());
 elements.convertButton.addEventListener("click", convert);
+elements.cancelConversion.addEventListener("click", () => activeController?.abort());
+document.querySelectorAll('input[name="mode"]').forEach((input) => {
+  input.addEventListener("change", syncModeUi);
+});
 
 ["dragenter", "dragover"].forEach((eventName) => {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -188,3 +348,6 @@ elements.downloadTxt.addEventListener("click", () =>
 elements.downloadMd.addEventListener("click", () =>
   download(currentOutput?.markdown || "", "md", "text/markdown"),
 );
+
+restoreApiConfig();
+syncModeUi();
