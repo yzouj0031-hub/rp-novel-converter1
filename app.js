@@ -92,26 +92,46 @@ function convert() {
   elements.convertButton.querySelector("span").textContent = "正在整理";
 
   window.setTimeout(() => {
-    currentOutput = renderChat(currentChat, {
-      mode: currentMode(),
-      removeTimestamps: elements.removeTimestamps.checked,
-      removeOoc: elements.removeOoc.checked,
-      title: elements.storyTitle.value,
-      userAlias: elements.userAlias.value,
-      characterAlias: elements.characterAlias.value,
-    });
+    try {
+      currentOutput = renderChat(currentChat, {
+        mode: currentMode(),
+        removeTimestamps: elements.removeTimestamps.checked,
+        removeOoc: elements.removeOoc.checked,
+        title: elements.storyTitle.value,
+        userAlias: elements.userAlias.value,
+        characterAlias: elements.characterAlias.value,
+      });
 
-    elements.manuscriptTitle.textContent = currentOutput.title;
-    elements.previewText.textContent = currentOutput.body;
-    elements.previewEmpty.hidden = true;
-    elements.manuscript.hidden = false;
-    elements.previewActions.hidden = false;
-    elements.outputStats.textContent =
-      `${currentOutput.messageCount} 条消息 · ${currentOutput.characterCount.toLocaleString("zh-CN")} 字符`;
-    elements.convertButton.classList.remove("is-working");
-    elements.convertButton.querySelector("span").textContent = "重新转换";
-    elements.manuscript.classList.remove("reveal");
-    requestAnimationFrame(() => elements.manuscript.classList.add("reveal"));
+      elements.manuscriptTitle.textContent = currentOutput.title;
+      elements.previewText.textContent = currentOutput.body;
+      elements.previewEmpty.hidden = true;
+      elements.manuscript.hidden = false;
+      elements.previewActions.hidden = false;
+      elements.outputStats.textContent =
+        `${currentOutput.messageCount} 条消息 · ${currentOutput.characterCount.toLocaleString("zh-CN")} 字符`;
+      elements.convertButton.querySelector("span").textContent = "重新转换";
+      elements.manuscript.classList.remove("reveal");
+      requestAnimationFrame(() => {
+        elements.manuscript.classList.add("reveal");
+        document.querySelector(".preview-card").scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          block: "start",
+        });
+      });
+      showToast("转换完成，结果已生成");
+    } catch (error) {
+      currentOutput = null;
+      showError(
+        error instanceof Error
+          ? `转换失败：${error.message}`
+          : "转换失败，请换一个导出文件重试。",
+      );
+      elements.convertButton.querySelector("span").textContent = "重新尝试";
+    } finally {
+      elements.convertButton.classList.remove("is-working");
+    }
   }, 180);
 }
 
