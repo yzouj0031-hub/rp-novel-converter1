@@ -37,6 +37,27 @@ const SENSITIVE_PATTERNS = [
   /(?:sexual|sexually explicit|erotic|pornographic)/i,
 ];
 
+const INTERFACE_PATTERNS = [
+  /(?:状态栏|待办事项|顶部标题|手记状态|文本双译|功能插件)/i,
+  /(?:^|[\s🏷️])(?:信息|内容规范|前文|COT规范)(?:开始|结束)/i,
+  /(?:意图分析|错误纠察|创作优化)/i,
+  /(?:^|\s)用户\s*=\s*\{\{user\}\}/i,
+  /<\s*(?:status|todo|title|details|potential_errors|character_settings|additional_info)\b/i,
+  /(?:输出|生成|返回).{0,18}(?:状态栏|摘要栏|标题标签|HTML|XML标签)/i,
+];
+
+const REGEX_PLACEMENT = {
+  USER_INPUT: 1,
+  AI_OUTPUT: 2,
+};
+
+const HTML_REPLACEMENT_PATTERN =
+  /<\s*(?:style|script|div|details|summary|span|table|iframe|img|link)\b/i;
+const CONTEXT_REGEX_PATTERN =
+  /隐藏历史|以前的|旧消息|旧回复|上下文裁剪|仅保留摘要|history|previous|[0-9一二三四五六七八九十]+楼/i;
+const MAX_REGEX_LENGTH = 4000;
+const MAX_REGEX_INPUT_LENGTH = 240000;
+
 const TEXT_FIELDS = [
   ["system_prompt", "System Prompt"],
   ["main_prompt", "Main Prompt"],
@@ -80,10 +101,123 @@ function classifyPrompt(name, content) {
   if (REASONING_PATTERNS.some((pattern) => pattern.test(sample))) {
     return { category: "blocked", reason: "思维链或内部推理指令" };
   }
+  if (INTERFACE_PATTERNS.some((pattern) => pattern.test(sample))) {
+    return { category: "incompatible", reason: "酒馆界面或附加格式，不适用于小说正文" };
+  }
   if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(sample))) {
     return { category: "sensitive", reason: "成人向写作项" };
   }
   return { category: "safe", reason: "写作与叙事指令" };
+}
+
+function isRiskyRegex(pattern) {
+  if (pattern.length > MAX_REGEX_LENGTH) return true;
+  return /\((?:[^()\\]|\\.)*(?:\+|\*)(?:[^()\\]|\\.)*\)\s*(?:\+|\*|\{\d)/.test(
+    pattern,
+  );
+}
+
+function parseRegexLiteral(value, options = {}) {
+  let source = String(value || "");
+  if (options.substituteRegex) source = applyMacros(source, options);
+  if (!source || isRiskyRegex(source)) return null;
+
+  let pattern = source;
+  let flags = "";
+  if (source.startsWith("/")) {
+    let slash = -1;
+    for (let index = source.length - 1; index > 0; index -= 1) {
+      if (source[index] !== "/") continue;
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) {
+        backslashes += 1;
+      }
+      if (backslashes % 2 === 0) {
+        slash = index;
+        break;
+      }
+    }
+    if (slash > 0) {
+      pattern = source.slice(1, slash);
+      flags = source.slice(slash + 1);
+    }
+  }
+
+  if (!/^[dgimsuvy]*$/.test(flags) || isRiskyRegex(pattern)) return null;
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
+function regexScripts(data) {
+  const embedded = data?.extensions?.regex_scripts;
+  const source = Array.isArray(embedded)
+    ? embedded
+    : Array.isArray(data?.regex_scripts)
+      ? data.regex_scripts
+      : Array.isArray(data)
+        ? data
+        : [];
+
+  return source.map((script, index) => {
+    const name = cleanName(script?.scriptName || script?.name, `正则 ${index + 1}`);
+    const findRegex = String(script?.findRegex || "");
+    const replaceString = String(script?.replaceString || "");
+    const placement = Array.isArray(script?.placement)
+      ? script.placement.map(Number).filter(Number.isFinite)
+      : [];
+    const nullableNumber = (value) =>
+      value === null || value === undefined || value === ""
+        ? null
+        : Number.isFinite(Number(value))
+          ? Number(value)
+          : null;
+    const base = {
+      id: String(script?.id || `regex-${index}`),
+      name,
+      findRegex,
+      replaceString,
+      trimStrings: Array.isArray(script?.trimStrings)
+        ? script.trimStrings.map(String)
+        : [],
+      placement,
+      disabled: script?.disabled === true,
+      markdownOnly: script?.markdownOnly === true,
+      promptOnly: script?.promptOnly === true,
+      runOnEdit: script?.runOnEdit !== false,
+      substituteRegex: Number(script?.substituteRegex) || 0,
+      minDepth: nullableNumber(script?.minDepth),
+      maxDepth: nullableNumber(script?.maxDepth),
+      order: index,
+    };
+
+    if (base.disabled) {
+      return { ...base, category: "disabled", reason: "正则在预设中未启用" };
+    }
+    if (
+      !findRegex ||
+      !placement.some((value) =>
+        [REGEX_PLACEMENT.USER_INPUT, REGEX_PLACEMENT.AI_OUTPUT].includes(value),
+      )
+    ) {
+      return { ...base, category: "invalid", reason: "不作用于玩家输入或 AI 输出" };
+    }
+    if (!parseRegexLiteral(findRegex, { substituteRegex: base.substituteRegex })) {
+      return { ...base, category: "invalid", reason: "正则无效或可能造成页面卡顿" };
+    }
+    if (HTML_REPLACEMENT_PATTERN.test(replaceString)) {
+      return { ...base, category: "visual", reason: "HTML 美化脚本不适用于纯文本输出" };
+    }
+    if (
+      CONTEXT_REGEX_PATTERN.test(name) ||
+      (!replaceString && (base.minDepth !== null || base.maxDepth !== null))
+    ) {
+      return { ...base, category: "context", reason: "为避免丢失剧情，跳过上下文裁剪" };
+    }
+    return { ...base, category: "active", reason: "文本正则已启用" };
+  });
 }
 
 function getOrderMap(data) {
@@ -141,12 +275,13 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
   } catch {
     throw new Error("预设不是有效的 JSON 文件。");
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
+  if (!data || typeof data !== "object") {
     throw new Error("没有识别到有效的酒馆预设结构。");
   }
 
   const rawEntries = promptEntries(data);
-  if (!rawEntries.length) {
+  const parsedRegexScripts = regexScripts(data);
+  if (!rawEntries.length && !parsedRegexScripts.length) {
     throw new Error("没有找到可导入的提示词项目。");
   }
 
@@ -164,10 +299,17 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
     name: cleanName(data.name || data.preset_name, fileBaseName(fileName)),
     fileName,
     entries,
+    regexScripts: parsedRegexScripts,
     safeCount: entries.filter((entry) => entry.category === "safe").length,
     sensitiveCount: entries.filter((entry) => entry.category === "sensitive").length,
     blockedCount: entries.filter((entry) => entry.category === "blocked").length,
+    incompatibleCount: entries.filter((entry) => entry.category === "incompatible").length,
     disabledCount: entries.filter((entry) => entry.category === "disabled").length,
+    regexActiveCount: parsedRegexScripts.filter((script) => script.category === "active")
+      .length,
+    regexSkippedCount: parsedRegexScripts.filter((script) =>
+      ["visual", "context", "invalid"].includes(script.category),
+    ).length,
   };
 }
 
@@ -211,6 +353,82 @@ export function compilePresetPrompt(preset, options = {}) {
 
 export function presetEntrySummary(preset) {
   return preset.entries
-    .filter((entry) => ["safe", "sensitive", "blocked"].includes(entry.category))
+    .filter((entry) =>
+      ["safe", "sensitive", "blocked", "incompatible"].includes(entry.category),
+    )
     .map(({ name, category, reason }) => ({ name, category, reason }));
+}
+
+export function presetRegexSummary(preset) {
+  return (preset?.regexScripts || [])
+    .filter((script) =>
+      ["active", "visual", "context", "invalid"].includes(script.category),
+    )
+    .map(({ name, category, reason }) => ({ name, category, reason }));
+}
+
+function depthAllowed(script, depth) {
+  if (!Number.isFinite(depth)) return true;
+  if (script.minDepth !== null && depth < script.minDepth) return false;
+  if (script.maxDepth !== null && script.maxDepth >= 0 && depth > script.maxDepth) {
+    return false;
+  }
+  return true;
+}
+
+function renderRegexReplacement(script, match, captures, groups, options) {
+  const trimStrings = script.trimStrings.map((value) => applyMacros(value, options));
+  const cleanCapture = (value) => {
+    let result = String(value ?? "");
+    trimStrings.forEach((trim) => {
+      if (trim) result = result.split(trim).join("");
+    });
+    return result;
+  };
+  const token = "\u0000DOLLAR\u0000";
+  return applyMacros(script.replaceString, options)
+    .replace(/\{\{match\}\}/gi, "$0")
+    .replace(/\$\$/g, token)
+    .replace(/\$&|\$0|\$(\d+)|\$<([^>]+)>/g, (placeholder, number, groupName) => {
+      if (placeholder === "$&" || placeholder === "$0") return cleanCapture(match);
+      if (number) return cleanCapture(captures[Number(number) - 1]);
+      return cleanCapture(groups?.[groupName]);
+    })
+    .replaceAll(token, "$");
+}
+
+export function applyPresetRegex(text, preset, options = {}) {
+  if (!preset?.regexScripts || options.enabled === false) return String(text || "");
+  let output = String(text || "");
+  if (!output || output.length > MAX_REGEX_INPUT_LENGTH) return output;
+
+  const placement = Number(options.placement);
+  const phase = options.phase === "output" ? "output" : "prompt";
+  for (const script of preset.regexScripts) {
+    if (script.category !== "active" || !script.placement.includes(placement)) continue;
+    if (!depthAllowed(script, Number(options.depth))) continue;
+    const applies =
+      phase === "prompt"
+        ? script.promptOnly || (!script.promptOnly && !script.markdownOnly)
+        : script.promptOnly || script.markdownOnly || (!script.promptOnly && !script.markdownOnly);
+    if (!applies) continue;
+
+    const regex = parseRegexLiteral(script.findRegex, {
+      ...options,
+      substituteRegex: script.substituteRegex,
+    });
+    if (!regex) continue;
+    try {
+      output = output.replace(regex, (match, ...args) => {
+        const maybeGroups = args.at(-1);
+        const groups =
+          maybeGroups && typeof maybeGroups === "object" ? maybeGroups : undefined;
+        const captures = args.slice(0, groups ? -3 : -2);
+        return renderRegexReplacement(script, match, captures, groups, options);
+      });
+    } catch {
+      // A malformed imported script should never stop the conversion.
+    }
+  }
+  return output;
 }
