@@ -2,6 +2,7 @@ import {
   buildNovelMessages,
   createTranscriptChunks,
   requestChatCompletion,
+  requestModelList,
 } from "./ai.js";
 import { cleanText, parseChatExport, renderChat } from "./parser.js";
 
@@ -24,6 +25,8 @@ const elements = {
   apiBaseUrl: document.querySelector("#api-base-url"),
   apiKey: document.querySelector("#api-key"),
   apiModel: document.querySelector("#api-model"),
+  modelOptions: document.querySelector("#model-options"),
+  fetchModels: document.querySelector("#fetch-models"),
   aiStyle: document.querySelector("#ai-style"),
   aiCustomPrompt: document.querySelector("#ai-custom-prompt"),
   rememberApiConfig: document.querySelector("#remember-api-config"),
@@ -114,6 +117,44 @@ function syncModeUi() {
       : currentOutput
         ? "重新转换"
         : "开始转换";
+  }
+}
+
+async function fetchAvailableModels() {
+  const config = apiConfig();
+  if (!config.baseUrl) {
+    showError("拉取模型失败：请先填写 API Base URL。");
+    elements.apiBaseUrl.focus();
+    return;
+  }
+
+  showError();
+  elements.fetchModels.disabled = true;
+  elements.fetchModels.textContent = "拉取中…";
+  try {
+    const models = await requestModelList(config);
+    elements.modelOptions.replaceChildren(
+      ...models.map((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        return option;
+      }),
+    );
+    if (!elements.apiModel.value && models.length === 1) {
+      elements.apiModel.value = models[0];
+    }
+    rememberApiConfig(apiConfig());
+    elements.apiModel.focus();
+    showToast(`已拉取 ${models.length} 个模型，可输入或选择`);
+  } catch (error) {
+    showError(
+      error instanceof Error
+        ? `拉取模型失败：${error.message}`
+        : "拉取模型失败，请检查接口设置。",
+    );
+  } finally {
+    elements.fetchModels.disabled = false;
+    elements.fetchModels.textContent = "拉取模型";
   }
 }
 
@@ -311,6 +352,7 @@ function download(content, extension, mimeType) {
 elements.fileInput.addEventListener("change", (event) => loadFile(event.target.files?.[0]));
 elements.replaceFile.addEventListener("click", () => elements.fileInput.click());
 elements.convertButton.addEventListener("click", convert);
+elements.fetchModels.addEventListener("click", fetchAvailableModels);
 elements.cancelConversion.addEventListener("click", () => activeController?.abort());
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
   input.addEventListener("change", syncModeUi);
