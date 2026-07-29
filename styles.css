@@ -517,6 +517,129 @@ summary:focus-visible,
   opacity: 0.55;
 }
 
+.preset-import {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px;
+  border: 1px dashed var(--rule-strong);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.48);
+}
+
+.preset-import-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.preset-import-copy > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.preset-summary {
+  padding: 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.68);
+}
+
+.preset-summary-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preset-summary-heading strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-size: 0.98rem;
+}
+
+.preset-summary-heading small,
+.preset-note {
+  color: var(--faint);
+  line-height: 1.5;
+}
+
+.preset-sensitive-row {
+  margin-top: 12px;
+}
+
+.preset-details {
+  margin-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.preset-details summary {
+  cursor: pointer;
+  padding: 11px 0 5px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.preset-details ul {
+  display: grid;
+  max-height: 220px;
+  gap: 5px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preset-details li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--paper-deep);
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.preset-details li > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-item-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #e7ded1;
+  font-size: 0.66rem;
+}
+
+.preset-item-badge.is-safe {
+  color: #496344;
+  background: #e1eadc;
+}
+
+.preset-item-badge.is-sensitive {
+  color: #8a5b18;
+  background: #f3e7c9;
+}
+
+.preset-item-badge.is-blocked {
+  color: var(--vermilion-dark);
+  background: var(--vermilion-wash);
+}
+
+.preset-note {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+}
+
 .compact-check,
 .consent-check {
   display: flex;
@@ -945,6 +1068,15 @@ summary:focus-visible,
 
   .api-grid {
     grid-template-columns: 1fr;
+  }
+
+  .preset-import {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .preset-import .fetch-models-button {
+    min-height: 42px;
   }
 
   .wide-field {
