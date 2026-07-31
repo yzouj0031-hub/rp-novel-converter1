@@ -99,7 +99,7 @@ const presetJson = JSON.stringify({
 test("parses enabled SillyTavern preset items and classifies imports", () => {
   const preset = parseSillyTavernPreset(presetJson, "preset.json");
   assert.equal(preset.name, "测试预设");
-  assert.equal(preset.safeCount, 1);
+  assert.equal(preset.safeCount, 2);
   assert.equal(preset.sensitiveCount, 1);
   assert.equal(preset.blockedCount, 3);
   assert.equal(preset.incompatibleCount, 1);
@@ -108,7 +108,7 @@ test("parses enabled SillyTavern preset items and classifies imports", () => {
   assert.equal(preset.regexSkippedCount, 3);
   assert.deepEqual(
     presetEntrySummary(preset).map((item) => item.category),
-    ["safe", "sensitive", "blocked", "blocked", "blocked", "incompatible"],
+    ["safe", "safe", "sensitive", "blocked", "blocked", "blocked", "incompatible"],
   );
   assert.deepEqual(
     presetRegexSummary(preset).map((item) => item.category),
@@ -127,13 +127,18 @@ test("compiles safe preset instructions in order and replaces common macros", ()
   assert.doesNotMatch(safe, /忽略系统/);
 
   const withSensitive = compilePresetPrompt(preset, {
-    includeSensitive: true,
     userName: "旅人",
     characterName: "沈砚",
   });
-  assert.match(withSensitive, /成人向官能文风/);
-  assert.doesNotMatch(withSensitive, /完整思维链/);
-  assert.doesNotMatch(withSensitive, /<status>/);
+  assert.doesNotMatch(withSensitive, /成人向官能文风/);
+  preset.entries.find((entry) => entry.identifier === "adult").selected = true;
+  const enabledSensitive = compilePresetPrompt(preset, {
+    userName: "旅人",
+    characterName: "沈砚",
+  });
+  assert.match(enabledSensitive, /成人向官能文风/);
+  assert.doesNotMatch(enabledSensitive, /完整思维链/);
+  assert.doesNotMatch(enabledSensitive, /<status>/);
 });
 
 test("applies compatible text regexes by placement, phase and depth", () => {
