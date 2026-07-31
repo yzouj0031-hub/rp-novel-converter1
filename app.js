@@ -6,6 +6,11 @@ import {
 } from "./ai.js";
 import { cleanText, parseChatExport, renderChat } from "./parser.js";
 import {
+  compileReferenceContext,
+  parseCharacterCardFile,
+  parseWorldBookJson,
+} from "./context.js";
+import {
   applyPresetRegex,
   compilePresetPrompt,
   parseSillyTavernPreset,
@@ -42,11 +47,23 @@ const elements = {
   presetName: document.querySelector("#preset-name"),
   presetStats: document.querySelector("#preset-stats"),
   presetItems: document.querySelector("#preset-items"),
-  presetSensitiveRow: document.querySelector("#preset-sensitive-row"),
-  includeSensitivePreset: document.querySelector("#include-sensitive-preset"),
   presetRegexRow: document.querySelector("#preset-regex-row"),
   applyPresetRegexInput: document.querySelector("#apply-preset-regex"),
   removePreset: document.querySelector("#remove-preset"),
+  characterInput: document.querySelector("#character-input"),
+  importCharacter: document.querySelector("#import-character"),
+  characterSummary: document.querySelector("#character-summary"),
+  characterName: document.querySelector("#character-name"),
+  characterStats: document.querySelector("#character-stats"),
+  characterItems: document.querySelector("#character-items"),
+  removeCharacter: document.querySelector("#remove-character"),
+  worldInput: document.querySelector("#world-input"),
+  importWorld: document.querySelector("#import-world"),
+  worldSummary: document.querySelector("#world-summary"),
+  worldName: document.querySelector("#world-name"),
+  worldStats: document.querySelector("#world-stats"),
+  worldItems: document.querySelector("#world-items"),
+  clearWorld: document.querySelector("#clear-world"),
   rememberApiConfig: document.querySelector("#remember-api-config"),
   apiConsent: document.querySelector("#api-consent"),
   conversionProgress: document.querySelector("#conversion-progress"),
@@ -72,6 +89,8 @@ let currentChat = null;
 let currentOutput = null;
 let activeController = null;
 let currentPreset = null;
+let currentCharacterCard = null;
+let worldBooks = [];
 
 function showError(message = "") {
   elements.errorMessage.textContent = message;
@@ -145,27 +164,21 @@ function renderPresetSummary() {
   if (!preset) return;
 
   elements.presetName.textContent = preset.name;
-  const activeCount =
-    preset.safeCount +
-    (elements.includeSensitivePreset.checked ? preset.sensitiveCount : 0);
+  const activeCount = preset.entries.filter((entry) => entry.selected).length;
+  const activeRegexCount = preset.regexScripts.filter(
+    (script) => script.category === "active" && script.selected,
+  ).length;
   elements.presetStats.textContent =
     `${activeCount} 项已应用 · ${preset.blockedCount} 项已过滤` +
     (preset.incompatibleCount ? ` · ${preset.incompatibleCount} 项格式指令未采用` : "") +
-    (preset.sensitiveCount
-      ? ` · ${preset.sensitiveCount} 项成人向${elements.includeSensitivePreset.checked ? "已启用" : "未启用"}`
-      : "") +
     (preset.regexActiveCount
-      ? ` · ${preset.regexActiveCount} 条文本正则${elements.applyPresetRegexInput.checked ? "已启用" : "未启用"}`
+      ? ` · ${activeRegexCount}/${preset.regexActiveCount} 条文本正则已选择`
       : "");
-  elements.presetSensitiveRow.hidden = !preset.sensitiveCount;
   elements.presetRegexRow.hidden = !preset.regexActiveCount;
 
   const labels = {
-    safe: "已应用",
-    sensitive: elements.includeSensitivePreset.checked ? "已应用" : "未启用",
     blocked: "已过滤",
     incompatible: "不适用",
-    active: elements.applyPresetRegexInput.checked ? "正则启用" : "正则未启用",
     visual: "跳过美化",
     context: "跳过裁剪",
     invalid: "正则无效",
@@ -177,12 +190,31 @@ function renderPresetSummary() {
   elements.presetItems.replaceChildren(
     ...items.map((item) => {
       const row = document.createElement("li");
+      const control = document.createElement(item.selectable ? "label" : "span");
+      control.className = "preset-item-control";
+      if (item.selectable) {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = item.selected === true;
+        checkbox.dataset.presetType = item.type;
+        checkbox.dataset.presetId = item.id;
+        control.append(checkbox);
+      }
       const name = document.createElement("span");
       const badge = document.createElement("span");
       name.textContent = item.name;
-      badge.textContent = labels[item.category];
+      badge.textContent = item.selectable
+        ? item.selected
+          ? item.type === "regex"
+            ? "正则启用"
+            : "已启用"
+          : item.originalEnabled
+            ? "已关闭"
+            : "原预设关闭"
+        : labels[item.category];
       badge.className = `preset-item-badge is-${item.category}`;
-      row.append(name, badge);
+      control.append(name);
+      row.append(control, badge);
       return row;
     }),
   );
@@ -200,7 +232,6 @@ async function loadPreset(file) {
   elements.importPreset.textContent = "正在读取…";
   try {
     currentPreset = parseSillyTavernPreset(await file.text(), file.name);
-    elements.includeSensitivePreset.checked = false;
     elements.applyPresetRegexInput.checked = currentPreset.regexActiveCount > 0;
     renderPresetSummary();
     showToast(`已导入预设：${currentPreset.name}`);
@@ -212,6 +243,149 @@ async function loadPreset(file) {
     elements.importPreset.disabled = false;
     elements.importPreset.textContent = "导入酒馆预设";
     elements.presetInput.value = "";
+  }
+}
+
+function renderCharacterSummary() {
+  const card = currentCharacterCard;
+  elements.characterSummary.hidden = !card;
+  if (!card) return;
+
+  const selectedSections = card.sections.filter((section) => section.selected).length;
+  const activeRegexes = card.regexScripts.filter(
+    (script) => script.category === "active" && script.selected,
+  ).length;
+  elements.characterName.textContent = card.name;
+  elements.characterStats.textContent =
+    `${selectedSections}/${card.sections.length} 项资料已选择` +
+    (card.worldBook ? ` · 内嵌世界书 ${card.worldBook.entries.length} 条` : "") +
+    (card.regexScripts.length ? ` · ${activeRegexes} 条角色正则` : "");
+
+  const items = [
+    ...card.sections.map((section) => ({
+      id: section.id,
+      name: section.label,
+      selected: section.selected,
+      selectable: true,
+      type: "section",
+      badge: section.selected ? "已启用" : "未启用",
+    })),
+    ...presetRegexSummary(card).map((item) => ({
+      ...item,
+      type: "regex",
+      badge: item.selectable
+        ? item.selected
+          ? "正则启用"
+          : "正则未启用"
+        : "正则跳过",
+    })),
+  ];
+
+  elements.characterItems.replaceChildren(
+    ...items.map((item) => {
+      const row = document.createElement("li");
+      const control = document.createElement(item.selectable ? "label" : "span");
+      control.className = "preset-item-control";
+      if (item.selectable) {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = item.selected === true;
+        checkbox.dataset.characterType = item.type;
+        checkbox.dataset.characterId = item.id;
+        control.append(checkbox);
+      }
+      const name = document.createElement("span");
+      name.textContent = item.name;
+      const badge = document.createElement("span");
+      badge.textContent = item.badge;
+      badge.className = `preset-item-badge is-${item.category || "safe"}`;
+      control.append(name);
+      row.append(control, badge);
+      return row;
+    }),
+  );
+}
+
+function renderWorldSummary() {
+  elements.worldSummary.hidden = !worldBooks.length;
+  if (!worldBooks.length) return;
+  const entries = worldBooks.flatMap((book, bookIndex) =>
+    book.entries.map((entry) => ({ ...entry, bookIndex })),
+  );
+  const selected = entries.filter((entry) => entry.selected).length;
+  elements.worldName.textContent =
+    worldBooks.length === 1 ? worldBooks[0].name : `${worldBooks.length} 本世界书`;
+  elements.worldStats.textContent =
+    `${selected}/${entries.length} 条已选择 · 常驻条目始终生效，其余按关键词激活`;
+  elements.worldItems.replaceChildren(
+    ...entries.map((entry) => {
+      const row = document.createElement("li");
+      const control = document.createElement("label");
+      control.className = "preset-item-control";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = entry.selected;
+      checkbox.dataset.worldBook = String(entry.bookIndex);
+      checkbox.dataset.worldEntry = entry.id;
+      const name = document.createElement("span");
+      name.textContent =
+        worldBooks.length > 1 ? `${entry.bookName} · ${entry.name}` : entry.name;
+      const badge = document.createElement("span");
+      badge.textContent = entry.constant
+        ? "常驻"
+        : entry.keys.length
+          ? entry.keys.slice(0, 2).join(" / ")
+          : "无关键词";
+      badge.className = "preset-item-badge is-safe";
+      control.append(checkbox, name);
+      row.append(control, badge);
+      return row;
+    }),
+  );
+}
+
+async function loadCharacterCard(file) {
+  if (!file) return;
+  showError();
+  elements.importCharacter.disabled = true;
+  elements.importCharacter.textContent = "正在读取…";
+  try {
+    currentCharacterCard = await parseCharacterCardFile(file);
+    worldBooks = worldBooks.filter((book) => !book.fromCharacterCard);
+    if (currentCharacterCard.worldBook) {
+      worldBooks.push({ ...currentCharacterCard.worldBook, fromCharacterCard: true });
+    }
+    renderCharacterSummary();
+    renderWorldSummary();
+    showToast(`已导入角色卡：${currentCharacterCard.name}`);
+  } catch (error) {
+    showError(error instanceof Error ? `角色卡导入失败：${error.message}` : "角色卡导入失败。");
+  } finally {
+    elements.importCharacter.disabled = false;
+    elements.importCharacter.textContent = "导入角色卡";
+    elements.characterInput.value = "";
+  }
+}
+
+async function loadWorldBooks(files) {
+  const list = [...(files || [])];
+  if (!list.length) return;
+  showError();
+  elements.importWorld.disabled = true;
+  elements.importWorld.textContent = "正在读取…";
+  try {
+    for (const file of list) {
+      if (!/\.json$/i.test(file.name)) throw new Error(`${file.name} 不是 JSON 文件。`);
+      worldBooks.push(parseWorldBookJson(await file.text(), file.name));
+    }
+    renderWorldSummary();
+    showToast(`已导入 ${list.length} 本世界书`);
+  } catch (error) {
+    showError(error instanceof Error ? `世界书导入失败：${error.message}` : "世界书导入失败。");
+  } finally {
+    elements.importWorld.disabled = false;
+    elements.importWorld.textContent = "导入世界书";
+    elements.worldInput.value = "";
   }
 }
 
@@ -363,13 +537,21 @@ async function convertWithAi() {
       elements.characterAlias.value ||
       currentChat.metadata.characterName,
   };
+  const applyImportedRegex = (text, options) => {
+    let output = applyPresetRegex(text, currentPreset, options);
+    output = applyPresetRegex(output, currentCharacterCard, {
+      ...options,
+      enabled: true,
+    });
+    return output;
+  };
   const chunks = createTranscriptChunks(currentChat, {
     removeOoc: elements.removeOoc.checked,
     userAlias: elements.userAlias.value,
     characterAlias: elements.characterAlias.value,
     cleanText,
     transformMessage: (text, { message, depth }) =>
-      applyPresetRegex(text, currentPreset, {
+      applyImportedRegex(text, {
         ...presetOptions,
         placement: message.role === "user" ? 1 : 2,
         phase: "prompt",
@@ -393,7 +575,6 @@ async function convertWithAi() {
       style: config.style,
       customPrompt: config.customPrompt,
       presetPrompt: compilePresetPrompt(currentPreset, {
-        includeSensitive: elements.includeSensitivePreset.checked,
         userName:
           elements.userAlias.value ||
           currentChat.metadata.userName,
@@ -401,12 +582,24 @@ async function convertWithAi() {
           elements.characterAlias.value ||
           currentChat.metadata.characterName,
       }),
+      referencePrompt: compileReferenceContext({
+        card: currentCharacterCard,
+        worldBooks,
+        text: chunks[index],
+        userName:
+          elements.userAlias.value ||
+          currentChat.metadata.userName,
+        characterName:
+          elements.characterAlias.value ||
+          currentCharacterCard?.name ||
+          currentChat.metadata.characterName,
+      }),
       continuity: results[index - 1]?.slice(-700) || "",
     });
     const rawText = await requestChatCompletion(config, messages, {
       signal: activeController.signal,
     });
-    const text = applyPresetRegex(rawText, currentPreset, {
+    const text = applyImportedRegex(rawText, {
       ...presetOptions,
       placement: 2,
       phase: "output",
@@ -483,14 +676,76 @@ elements.importPreset.addEventListener("click", () => elements.presetInput.click
 elements.presetInput.addEventListener("change", (event) =>
   loadPreset(event.target.files?.[0]),
 );
-elements.includeSensitivePreset.addEventListener("change", renderPresetSummary);
 elements.applyPresetRegexInput.addEventListener("change", renderPresetSummary);
+elements.presetItems.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !currentPreset) return;
+  if (input.dataset.presetType === "prompt") {
+    const entry = currentPreset.entries.find(
+      (item) => item.identifier === input.dataset.presetId,
+    );
+    if (entry && ["safe", "sensitive"].includes(entry.category)) {
+      entry.selected = input.checked;
+    }
+  }
+  if (input.dataset.presetType === "regex") {
+    const script = currentPreset.regexScripts.find(
+      (item) => item.id === input.dataset.presetId,
+    );
+    if (script?.category === "active") script.selected = input.checked;
+  }
+  renderPresetSummary();
+});
 elements.removePreset.addEventListener("click", () => {
   currentPreset = null;
-  elements.includeSensitivePreset.checked = false;
   elements.applyPresetRegexInput.checked = false;
   renderPresetSummary();
   showToast("已移除预设");
+});
+elements.importCharacter.addEventListener("click", () => elements.characterInput.click());
+elements.characterInput.addEventListener("change", (event) =>
+  loadCharacterCard(event.target.files?.[0]),
+);
+elements.characterItems.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || !currentCharacterCard) return;
+  if (input.dataset.characterType === "section") {
+    const section = currentCharacterCard.sections.find(
+      (item) => item.id === input.dataset.characterId,
+    );
+    if (section) section.selected = input.checked;
+  }
+  if (input.dataset.characterType === "regex") {
+    const script = currentCharacterCard.regexScripts.find(
+      (item) => item.id === input.dataset.characterId,
+    );
+    if (script?.category === "active") script.selected = input.checked;
+  }
+  renderCharacterSummary();
+});
+elements.removeCharacter.addEventListener("click", () => {
+  currentCharacterCard = null;
+  worldBooks = worldBooks.filter((book) => !book.fromCharacterCard);
+  renderCharacterSummary();
+  renderWorldSummary();
+  showToast("已移除角色卡");
+});
+elements.importWorld.addEventListener("click", () => elements.worldInput.click());
+elements.worldInput.addEventListener("change", (event) =>
+  loadWorldBooks(event.target.files),
+);
+elements.worldItems.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
+  const book = worldBooks[Number(input.dataset.worldBook)];
+  const entry = book?.entries.find((item) => item.id === input.dataset.worldEntry);
+  if (entry) entry.selected = input.checked;
+  renderWorldSummary();
+});
+elements.clearWorld.addEventListener("click", () => {
+  worldBooks = worldBooks.filter((book) => book.fromCharacterCard);
+  renderWorldSummary();
+  showToast("已清空外部世界书");
 });
 elements.cancelConversion.addEventListener("click", () => activeController?.abort());
 document.querySelectorAll('input[name="mode"]').forEach((input) => {
