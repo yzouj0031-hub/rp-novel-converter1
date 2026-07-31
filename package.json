@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "node --test",
-    "check": "node --check app.js && node --check parser.js && node --test"
+    "check": "node --check app.js && node --check parser.js && node --check preset.js && node --check context.js && node --test"
   },
   "devDependencies": {
     "vite": "^7.0.0"
