@@ -151,7 +151,7 @@ function parseRegexLiteral(value, options = {}) {
   }
 }
 
-function regexScripts(data) {
+export function parseRegexScripts(data) {
   const embedded = data?.extensions?.regex_scripts;
   const source = Array.isArray(embedded)
     ? embedded
@@ -193,30 +193,52 @@ function regexScripts(data) {
       order: index,
     };
 
-    if (base.disabled) {
-      return { ...base, category: "disabled", reason: "正则在预设中未启用" };
-    }
     if (
       !findRegex ||
       !placement.some((value) =>
         [REGEX_PLACEMENT.USER_INPUT, REGEX_PLACEMENT.AI_OUTPUT].includes(value),
       )
     ) {
-      return { ...base, category: "invalid", reason: "不作用于玩家输入或 AI 输出" };
+      return {
+        ...base,
+        category: "invalid",
+        reason: "不作用于玩家输入或 AI 输出",
+        selected: false,
+      };
     }
     if (!parseRegexLiteral(findRegex, { substituteRegex: base.substituteRegex })) {
-      return { ...base, category: "invalid", reason: "正则无效或可能造成页面卡顿" };
+      return {
+        ...base,
+        category: "invalid",
+        reason: "正则无效或可能造成页面卡顿",
+        selected: false,
+      };
     }
     if (HTML_REPLACEMENT_PATTERN.test(replaceString)) {
-      return { ...base, category: "visual", reason: "HTML 美化脚本不适用于纯文本输出" };
+      return {
+        ...base,
+        category: "visual",
+        reason: "HTML 美化脚本不适用于纯文本输出",
+        selected: false,
+      };
     }
     if (
       CONTEXT_REGEX_PATTERN.test(name) ||
       (!replaceString && (base.minDepth !== null || base.maxDepth !== null))
     ) {
-      return { ...base, category: "context", reason: "为避免丢失剧情，跳过上下文裁剪" };
+      return {
+        ...base,
+        category: "context",
+        reason: "为避免丢失剧情，跳过上下文裁剪",
+        selected: false,
+      };
     }
-    return { ...base, category: "active", reason: "文本正则已启用" };
+    return {
+      ...base,
+      category: "active",
+      reason: base.disabled ? "正则在原预设中未启用" : "文本正则已启用",
+      selected: !base.disabled,
+    };
   });
 }
 
@@ -280,19 +302,29 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
   }
 
   const rawEntries = promptEntries(data);
-  const parsedRegexScripts = regexScripts(data);
+  const parsedRegexScripts = parseRegexScripts(data);
   if (!rawEntries.length && !parsedRegexScripts.length) {
     throw new Error("没有找到可导入的提示词项目。");
   }
 
   const entries = rawEntries.map((entry) => {
-    if (!entry.enabled) {
-      return { ...entry, category: "disabled", reason: "预设中未启用" };
-    }
     if (entry.marker || !entry.content) {
-      return { ...entry, category: "marker", reason: "动态占位或空项目" };
+      return {
+        ...entry,
+        originalEnabled: entry.enabled,
+        category: "marker",
+        reason: "动态占位或空项目",
+        selected: false,
+      };
     }
-    return { ...entry, ...classifyPrompt(entry.name, entry.content) };
+    const classified = classifyPrompt(entry.name, entry.content);
+    return {
+      ...entry,
+      originalEnabled: entry.enabled,
+      ...classified,
+      reason: entry.enabled ? classified.reason : `原预设关闭 · ${classified.reason}`,
+      selected: entry.enabled && classified.category === "safe",
+    };
   });
 
   return {
@@ -304,7 +336,7 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
     sensitiveCount: entries.filter((entry) => entry.category === "sensitive").length,
     blockedCount: entries.filter((entry) => entry.category === "blocked").length,
     incompatibleCount: entries.filter((entry) => entry.category === "incompatible").length,
-    disabledCount: entries.filter((entry) => entry.category === "disabled").length,
+    disabledCount: entries.filter((entry) => !entry.originalEnabled).length,
     regexActiveCount: parsedRegexScripts.filter((script) => script.category === "active")
       .length,
     regexSkippedCount: parsedRegexScripts.filter((script) =>
@@ -330,8 +362,10 @@ export function compilePresetPrompt(preset, options = {}) {
   );
   const allowed = preset.entries.filter(
     (entry) =>
-      entry.category === "safe" ||
-      (includeSensitive && entry.category === "sensitive"),
+      entry.selected === true ||
+      (entry.selected === undefined &&
+        (entry.category === "safe" ||
+          (includeSensitive && entry.category === "sensitive"))),
   );
 
   const sections = [];
@@ -356,7 +390,16 @@ export function presetEntrySummary(preset) {
     .filter((entry) =>
       ["safe", "sensitive", "blocked", "incompatible"].includes(entry.category),
     )
-    .map(({ name, category, reason }) => ({ name, category, reason }));
+    .map(({ identifier, name, category, reason, selected, originalEnabled }) => ({
+      id: identifier,
+      name,
+      category,
+      reason,
+      selected,
+      originalEnabled,
+      selectable: ["safe", "sensitive"].includes(category),
+      type: "prompt",
+    }));
 }
 
 export function presetRegexSummary(preset) {
@@ -364,7 +407,16 @@ export function presetRegexSummary(preset) {
     .filter((script) =>
       ["active", "visual", "context", "invalid"].includes(script.category),
     )
-    .map(({ name, category, reason }) => ({ name, category, reason }));
+    .map(({ id, name, category, reason, selected, disabled }) => ({
+      id,
+      name,
+      category,
+      reason,
+      selected,
+      originalEnabled: !disabled,
+      selectable: category === "active",
+      type: "regex",
+    }));
 }
 
 function depthAllowed(script, depth) {
@@ -405,7 +457,13 @@ export function applyPresetRegex(text, preset, options = {}) {
   const placement = Number(options.placement);
   const phase = options.phase === "output" ? "output" : "prompt";
   for (const script of preset.regexScripts) {
-    if (script.category !== "active" || !script.placement.includes(placement)) continue;
+    if (
+      script.category !== "active" ||
+      script.selected === false ||
+      !script.placement.includes(placement)
+    ) {
+      continue;
+    }
     if (!depthAllowed(script, Number(options.depth))) continue;
     const applies =
       phase === "prompt"
