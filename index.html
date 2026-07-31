@@ -9,7 +9,7 @@
     />
     <meta name="theme-color" content="#f3ebdd" />
     <title>戏匣｜酒馆 RP 聊天转文本</title>
-    <link rel="stylesheet" href="./styles.css?v=6" />
+    <link rel="stylesheet" href="./styles.css?v=7" />
   </head>
   <body>
     <div class="page-shell">
@@ -171,7 +171,7 @@
                 <div class="preset-import-copy">
                   <span>酒馆预设（可选）</span>
                   <small>
-                    支持 SillyTavern Chat Completion 预设；按原顺序读取启用项
+                    支持 SillyTavern Chat Completion 预设；导入后可逐项开关
                   </small>
                 </div>
                 <input id="preset-input" type="file" accept=".json,application/json" hidden />
@@ -188,12 +188,6 @@
                   </div>
                   <button type="button" class="text-button" id="remove-preset">移除</button>
                 </div>
-                <label class="compact-check preset-sensitive-row" id="preset-sensitive-row" hidden>
-                  <input id="include-sensitive-preset" type="checkbox" />
-                  <span>
-                    应用预设中的成人向写作项（能否生成仍取决于所用模型与接口）
-                  </span>
-                </label>
                 <label class="compact-check preset-sensitive-row" id="preset-regex-row" hidden>
                   <input id="apply-preset-regex" type="checkbox" />
                   <span>
@@ -205,8 +199,71 @@
                   <ul id="preset-items"></ul>
                 </details>
                 <p class="preset-note">
-                  会执行纯文本正则；HTML 美化和“删除历史消息”类正则会跳过，以免正文出现网页代码或丢失剧情。
+                  提示项和文本正则都可单独开关；HTML 美化及删除历史消息类正则仍会跳过。
                 </p>
+              </div>
+              <div class="context-import-grid wide-field">
+                <div class="preset-import">
+                  <div class="preset-import-copy">
+                    <span>角色卡（可选）</span>
+                    <small>支持酒馆 PNG、V1/V2/V3 JSON，并读取内嵌世界书和文本正则</small>
+                  </div>
+                  <input
+                    id="character-input"
+                    type="file"
+                    accept=".png,.json,image/png,application/json"
+                    hidden
+                  />
+                  <button type="button" class="fetch-models-button" id="import-character">
+                    导入角色卡
+                  </button>
+                </div>
+                <div class="preset-import">
+                  <div class="preset-import-copy">
+                    <span>世界书（可选）</span>
+                    <small>支持同时导入多本 JSON；常驻或按关键词为当前分段补充设定</small>
+                  </div>
+                  <input
+                    id="world-input"
+                    type="file"
+                    accept=".json,application/json"
+                    multiple
+                    hidden
+                  />
+                  <button type="button" class="fetch-models-button" id="import-world">
+                    导入世界书
+                  </button>
+                </div>
+              </div>
+              <div class="preset-summary wide-field" id="character-summary" hidden>
+                <div class="preset-summary-heading">
+                  <div>
+                    <span class="summary-label">已导入角色卡</span>
+                    <strong id="character-name"></strong>
+                    <small id="character-stats"></small>
+                  </div>
+                  <button type="button" class="text-button" id="remove-character">移除</button>
+                </div>
+                <details class="preset-details">
+                  <summary>选择角色资料与正则</summary>
+                  <ul id="character-items"></ul>
+                </details>
+              </div>
+              <div class="preset-summary wide-field" id="world-summary" hidden>
+                <div class="preset-summary-heading">
+                  <div>
+                    <span class="summary-label">已导入世界书</span>
+                    <strong id="world-name"></strong>
+                    <small id="world-stats"></small>
+                  </div>
+                  <button type="button" class="text-button" id="clear-world">
+                    清空外部
+                  </button>
+                </div>
+                <details class="preset-details">
+                  <summary>选择世界书条目</summary>
+                  <ul id="world-items"></ul>
+                </details>
               </div>
               <label class="wide-field">
                 <span>附加要求（可选）</span>
@@ -300,6 +357,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=6"></script>
+    <script type="module" src="./app.js?v=7"></script>
   </body>
 </html>
