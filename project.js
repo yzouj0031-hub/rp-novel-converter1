@@ -8,6 +8,58 @@ function cleanOutput(output) {
   };
 }
 
+function normalizeMessage(message) {
+  return [message?.role, message?.speaker, String(message?.text || "").replace(/\r\n?/g, "\n").trim()]
+    .map((value) => String(value || ""))
+    .join("\u241f");
+}
+
+function fnv1a64(value) {
+  let hash = 0xcbf29ce484222325n;
+  for (const character of value) {
+    hash ^= BigInt(character.codePointAt(0));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+export function chatMessageFingerprints(chat) {
+  return (chat?.messages || []).map((message) => fnv1a64(normalizeMessage(message)));
+}
+
+export function projectSourceFingerprints(project) {
+  return (project?.chapters || []).flatMap((chapter) =>
+    Array.isArray(chapter?.sourceFingerprints) ? chapter.sourceFingerprints : [],
+  );
+}
+
+export function findHistoryOverlap(processed, incoming) {
+  const limit = Math.min(processed?.length || 0, incoming?.length || 0);
+  for (let size = limit; size > 0; size -= 1) {
+    let matches = true;
+    for (let index = 0; index < size; index += 1) {
+      if (processed[processed.length - size + index] !== incoming[index]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return size;
+  }
+  return 0;
+}
+
+export function sliceContinuationChat(chat, project) {
+  const incoming = chatMessageFingerprints(chat);
+  const processed = projectSourceFingerprints(project);
+  const skipped = findHistoryOverlap(processed, incoming);
+  return {
+    chat: { ...chat, messages: chat.messages.slice(skipped) },
+    fingerprints: incoming.slice(skipped),
+    skipped,
+    incomingCount: incoming.length,
+  };
+}
+
 export function updateWritingProject(project, output, options = {}) {
   const cleaned = cleanOutput(output);
   if (!cleaned.body) throw new Error("没有可保存的正文。");
@@ -22,6 +74,11 @@ export function updateWritingProject(project, output, options = {}) {
     body: cleaned.body,
     messageCount: cleaned.messageCount,
     characterCount: cleaned.characterCount,
+    sourceFingerprints: Array.isArray(options.sourceFingerprints)
+      ? [...options.sourceFingerprints]
+      : append
+        ? []
+        : chapters[chapters.length - 1]?.sourceFingerprints || [],
   };
 
   if (append) chapters.push(chapter);

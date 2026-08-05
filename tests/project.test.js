@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  chatMessageFingerprints,
+  findHistoryOverlap,
   parseStoredProject,
+  projectSourceFingerprints,
+  sliceContinuationChat,
   updateWritingProject,
   writingProjectToOutput,
 } from "../project.js";
@@ -42,4 +46,37 @@ test("validates stored local projects", () => {
   assert.deepEqual(parseStoredProject(JSON.stringify(project)), project);
   assert.equal(parseStoredProject("{broken"), null);
   assert.equal(parseStoredProject(JSON.stringify({ version: 1, chapters: [] })), null);
+});
+
+test("skips cumulative RP history and keeps only new messages", () => {
+  const oldChat = {
+    messages: [
+      { role: "user", speaker: "旅人", text: "推门。" },
+      { role: "character", speaker: "沈砚", text: "抬头看他。" },
+    ],
+  };
+  const fingerprints = chatMessageFingerprints(oldChat);
+  const project = updateWritingProject(null, first, { sourceFingerprints: fingerprints });
+  assert.deepEqual(projectSourceFingerprints(project), fingerprints);
+
+  const cumulative = {
+    messages: [
+      ...oldChat.messages,
+      { role: "user", speaker: "旅人", text: "把信放在桌上。" },
+      { role: "character", speaker: "沈砚", text: "拆开信封。" },
+    ],
+  };
+  const sliced = sliceContinuationChat(cumulative, project);
+  assert.equal(sliced.skipped, 2);
+  assert.equal(sliced.chat.messages.length, 2);
+  assert.match(sliced.chat.messages[0].text, /信/);
+
+  const incremental = sliceContinuationChat({
+    messages: [{ role: "user", speaker: "旅人", text: "完全独立的新消息。" }],
+  }, project);
+  assert.equal(incremental.skipped, 0);
+  assert.equal(incremental.chat.messages.length, 1);
+
+  assert.equal(findHistoryOverlap(fingerprints, fingerprints), 2);
+  assert.equal(sliceContinuationChat(oldChat, project).chat.messages.length, 0);
 });

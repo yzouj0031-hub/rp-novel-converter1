@@ -19,7 +19,9 @@ import {
   presetRegexSummary,
 } from "./preset.js";
 import {
+  chatMessageFingerprints,
   parseStoredProject,
+  sliceContinuationChat,
   updateWritingProject,
   writingProjectToOutput,
 } from "./project.js";
@@ -107,6 +109,7 @@ let currentCharacterCard = null;
 let worldBooks = [];
 let currentProject = null;
 let appendNextChapter = false;
+let currentSourceFingerprints = [];
 
 function showError(message = "") {
   elements.errorMessage.textContent = message;
@@ -512,10 +515,29 @@ async function loadFile(file) {
 
   try {
     const text = await file.text();
-    currentChat = parseChatExport(text, file.name);
+    const parsedChat = parseChatExport(text, file.name);
+    let skippedHistory = 0;
+    if (appendNextChapter) {
+      const continuation = sliceContinuationChat(parsedChat, currentProject);
+      skippedHistory = continuation.skipped;
+      if (!continuation.chat.messages.length) {
+        throw new Error(
+          skippedHistory
+            ? `这份记录中的 ${skippedHistory} 条消息都已经处理过，没有发现可用于下一章的新消息。`
+            : "这份记录中没有可用于下一章的新消息。",
+        );
+      }
+      currentChat = continuation.chat;
+      currentSourceFingerprints = continuation.fingerprints;
+    } else {
+      currentChat = parsedChat;
+      currentSourceFingerprints = chatMessageFingerprints(parsedChat);
+    }
 
     elements.fileName.textContent = file.name;
-    elements.messageCount.textContent = `${currentChat.messages.length} 条消息`;
+    elements.messageCount.textContent = skippedHistory
+      ? `${currentChat.messages.length} 条新增 · 已跳过 ${skippedHistory} 条历史`
+      : `${currentChat.messages.length} 条消息`;
     elements.fileSummary.hidden = false;
     elements.dropZone.classList.add("has-file");
     elements.dropTitle.textContent = appendNextChapter
@@ -527,8 +549,12 @@ async function loadFile(file) {
       currentChat.metadata.characterName || "沿用记录中的名字";
     elements.convertButton.disabled = false;
     elements.convertButton.focus();
+    if (skippedHistory) {
+      showToast(`已跳过 ${skippedHistory} 条旧消息，只处理新增剧情`);
+    }
   } catch (error) {
     currentChat = null;
+    currentSourceFingerprints = [];
     elements.convertButton.disabled = true;
     elements.dropTitle.textContent = "上传或拖放 .jsonl / .json 文件";
     showError(error instanceof Error ? error.message : "读取文件时发生错误。");
@@ -563,6 +589,7 @@ function renderProjectStatus(saved = true) {
 function saveConvertedOutput(output) {
   currentProject = updateWritingProject(currentProject, output, {
     append: appendNextChapter,
+    sourceFingerprints: currentSourceFingerprints,
   });
   appendNextChapter = false;
   let saved = true;
@@ -620,6 +647,7 @@ function displayConvertedOutput(output, message) {
 
 function resetLoadedChat() {
   currentChat = null;
+  currentSourceFingerprints = [];
   elements.fileInput.value = "";
   elements.fileSummary.hidden = true;
   elements.dropZone.classList.remove("has-file");
