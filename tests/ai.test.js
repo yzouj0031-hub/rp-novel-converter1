@@ -8,6 +8,7 @@ import {
   extractNarrativeContent,
   extractChatCompletionText,
   extractModelIds,
+  modelEndpointCandidates,
   normalizeChatEndpoint,
   normalizeModelsEndpoint,
   requestChatCompletion,
@@ -29,6 +30,11 @@ test("normalizes OpenAI-compatible base URLs", () => {
     normalizeModelsEndpoint("https://example.com/v1/chat/completions"),
     "https://example.com/v1/models",
   );
+  assert.deepEqual(modelEndpointCandidates("https://example.com/api/v1"), [
+    "https://example.com/api/v1/models",
+    "https://example.com/v1/models",
+    "https://example.com/models",
+  ]);
 });
 
 test("chunks transcripts without dropping messages", () => {
@@ -133,6 +139,9 @@ test("extracts and sorts compatible model lists", () => {
     ["model-a", "model-b"],
   );
   assert.deepEqual(extractModelIds({ models: ["z", { name: "a" }] }), ["a", "z"]);
+  assert.deepEqual(extractModelIds({ result: { data: [{ model: "nested-model" }] } }), [
+    "nested-model",
+  ]);
 });
 
 test("sends a compatible chat completions request", async () => {
@@ -185,4 +194,25 @@ test("fetches models with the configured authorization", async () => {
   assert.equal(request.url, "https://proxy.example/v1/models");
   assert.equal(request.options.headers.Authorization, "Bearer test-key");
   assert.deepEqual(models, ["model-a", "model-b"]);
+});
+
+test("tries common model endpoints until one succeeds", async () => {
+  const attempts = [];
+  const models = await requestModelList(
+    { baseUrl: "https://proxy.example/custom/v1", apiKey: "" },
+    {
+      fetchImpl: async (url) => {
+        attempts.push(url);
+        if (url.endsWith("/custom/v1/models")) {
+          return { ok: false, status: 404, json: async () => ({ message: "not found" }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ data: [{ id: "fallback" }] }) };
+      },
+    },
+  );
+  assert.deepEqual(models, ["fallback"]);
+  assert.deepEqual(attempts, [
+    "https://proxy.example/custom/v1/models",
+    "https://proxy.example/v1/models",
+  ]);
 });

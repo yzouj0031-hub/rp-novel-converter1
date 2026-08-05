@@ -117,7 +117,7 @@
                 <p class="eyebrow">OPENAI-COMPATIBLE API</p>
                 <h3 id="ai-config-title">中转 / 反代设置</h3>
               </div>
-              <span class="session-badge">仅本标签页</span>
+              <span class="session-badge">可保存在本机</span>
             </div>
 
             <div class="api-grid">
@@ -157,6 +157,7 @@
                   </button>
                 </div>
                 <datalist id="model-options"></datalist>
+                <small id="model-fetch-status">拉取失败时仍可手动填写；成功列表会缓存在本地</small>
               </div>
               <label>
                 <span>改写风格</span>
@@ -281,7 +282,7 @@
 
             <label class="compact-check">
               <input id="remember-api-config" type="checkbox" checked />
-              <span>在当前标签页记住接口设置</span>
+              <span>在当前浏览器保存 API 地址、Key、模型和写作设置（仅保存在此设备，可随时取消）</span>
             </label>
 
             <label class="consent-check">
@@ -322,6 +323,10 @@
               <h2 id="preview-heading">输出预览</h2>
             </div>
             <div class="preview-actions" id="preview-actions" hidden>
+              <button type="button" class="icon-button chapter-button" id="next-chapter" hidden>
+                开始第 2 章
+              </button>
+              <button type="button" class="icon-button" id="new-project" hidden>新建作品</button>
               <button type="button" class="icon-button" id="copy-button">复制</button>
               <button type="button" class="icon-button" id="download-txt">TXT</button>
               <button type="button" class="icon-button" id="download-md">Markdown</button>
@@ -329,6 +334,7 @@
           </div>
 
           <div class="preview-rule" aria-hidden="true"><span>✦</span></div>
+          <p class="local-draft-status" id="local-draft-status" hidden></p>
 
           <div class="preview-empty" id="preview-empty">
             <span class="empty-glyph" aria-hidden="true">卷</span>
@@ -349,7 +355,7 @@
       </main>
 
       <footer class="site-footer">
-        <p>本地模式不联网；AI 模式只会把正文发送到你填写的接口。</p>
+        <p>成稿与可选 API 配置保存在当前浏览器；AI 模式只会把正文发送到你填写的接口。</p>
         <a
           href="https://github.com/yzouj0031-hub/rp-novel-converter1"
           target="_blank"
@@ -361,6 +367,6 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="./app.js?v=7"></script>
+    <script type="module" src="./app.js?v=8"></script>
   </body>
 </html>

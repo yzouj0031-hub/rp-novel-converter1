@@ -243,6 +243,18 @@ summary:focus-visible,
   transition: 150ms ease-out;
 }
 
+.chapter-button {
+  border-color: var(--rule-strong);
+  color: var(--vermilion);
+}
+
+.local-draft-status {
+  margin: -14px 0 18px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: right;
+}
+
 .text-button {
   padding: 7px 10px;
 }
