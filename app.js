@@ -18,8 +18,16 @@ import {
   presetEntrySummary,
   presetRegexSummary,
 } from "./preset.js";
+import {
+  parseStoredProject,
+  updateWritingProject,
+  writingProjectToOutput,
+} from "./project.js";
 
-const API_SESSION_KEY = "rp-novel-converter-api-config";
+const API_STORAGE_KEY = "rp-novel-converter-api-config-v2";
+const LEGACY_API_SESSION_KEY = "rp-novel-converter-api-config";
+const MODEL_CACHE_KEY = "rp-novel-converter-model-cache-v1";
+const PROJECT_STORAGE_KEY = "rp-novel-converter-writing-project-v1";
 
 const elements = {
   fileInput: document.querySelector("#file-input"),
@@ -40,6 +48,7 @@ const elements = {
   apiModel: document.querySelector("#api-model"),
   modelOptions: document.querySelector("#model-options"),
   fetchModels: document.querySelector("#fetch-models"),
+  modelFetchStatus: document.querySelector("#model-fetch-status"),
   aiStyle: document.querySelector("#ai-style"),
   aiCustomPrompt: document.querySelector("#ai-custom-prompt"),
   strictFidelity: document.querySelector("#strict-fidelity"),
@@ -84,6 +93,9 @@ const elements = {
   copyButton: document.querySelector("#copy-button"),
   downloadTxt: document.querySelector("#download-txt"),
   downloadMd: document.querySelector("#download-md"),
+  nextChapter: document.querySelector("#next-chapter"),
+  newProject: document.querySelector("#new-project"),
+  localDraftStatus: document.querySelector("#local-draft-status"),
   toast: document.querySelector("#toast"),
 };
 
@@ -93,6 +105,8 @@ let activeController = null;
 let currentPreset = null;
 let currentCharacterCard = null;
 let worldBooks = [];
+let currentProject = null;
+let appendNextChapter = false;
 
 function showError(message = "") {
   elements.errorMessage.textContent = message;
@@ -114,15 +128,21 @@ function currentMode() {
 
 function restoreApiConfig() {
   try {
-    const stored = JSON.parse(sessionStorage.getItem(API_SESSION_KEY) || "null");
+    const raw =
+      localStorage.getItem(API_STORAGE_KEY) ||
+      sessionStorage.getItem(LEGACY_API_SESSION_KEY);
+    const stored = JSON.parse(raw || "null");
     if (!stored) return;
     elements.apiBaseUrl.value = stored.baseUrl || "";
     elements.apiKey.value = stored.apiKey || "";
     elements.apiModel.value = stored.model || "";
     elements.aiStyle.value = stored.style || "literary";
     elements.aiCustomPrompt.value = stored.customPrompt || "";
+    elements.rememberApiConfig.checked = true;
+    populateModelOptions(readCachedModels(stored.baseUrl));
   } catch {
-    sessionStorage.removeItem(API_SESSION_KEY);
+    localStorage.removeItem(API_STORAGE_KEY);
+    sessionStorage.removeItem(LEGACY_API_SESSION_KEY);
   }
 }
 
@@ -139,13 +159,52 @@ function apiConfig() {
 function rememberApiConfig(config) {
   try {
     if (elements.rememberApiConfig.checked) {
-      sessionStorage.setItem(API_SESSION_KEY, JSON.stringify(config));
+      localStorage.setItem(API_STORAGE_KEY, JSON.stringify(config));
+      sessionStorage.removeItem(LEGACY_API_SESSION_KEY);
     } else {
-      sessionStorage.removeItem(API_SESSION_KEY);
+      localStorage.removeItem(API_STORAGE_KEY);
+      sessionStorage.removeItem(LEGACY_API_SESSION_KEY);
     }
   } catch {
-    // Private browsing modes may block session storage; conversion can continue.
+    showToast("浏览器阻止了本地保存，配置仅本次有效");
   }
+}
+
+function modelCacheId(baseUrl) {
+  return String(baseUrl || "").trim().replace(/\/+$/, "");
+}
+
+function readModelCache() {
+  try {
+    return JSON.parse(localStorage.getItem(MODEL_CACHE_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function readCachedModels(baseUrl) {
+  const entry = readModelCache()[modelCacheId(baseUrl)];
+  return Array.isArray(entry?.models) ? entry.models : [];
+}
+
+function saveCachedModels(baseUrl, models) {
+  try {
+    const cache = readModelCache();
+    cache[modelCacheId(baseUrl)] = { models, updatedAt: new Date().toISOString() };
+    localStorage.setItem(MODEL_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // A model cache failure should not block conversion.
+  }
+}
+
+function populateModelOptions(models) {
+  elements.modelOptions.replaceChildren(
+    ...(models || []).map((id) => {
+      const option = document.createElement("option");
+      option.value = id;
+      return option;
+    }),
+  );
 }
 
 function syncModeUi() {
@@ -402,27 +461,38 @@ async function fetchAvailableModels() {
   showError();
   elements.fetchModels.disabled = true;
   elements.fetchModels.textContent = "拉取中…";
+  elements.modelFetchStatus.textContent = "正在尝试兼容的模型地址…";
   try {
-    const models = await requestModelList(config);
-    elements.modelOptions.replaceChildren(
-      ...models.map((id) => {
-        const option = document.createElement("option");
-        option.value = id;
-        return option;
-      }),
-    );
+    const models = await requestModelList(config, {
+      onAttempt: ({ index, total, endpoint }) => {
+        elements.fetchModels.textContent = `尝试 ${index + 1}/${total}`;
+        elements.modelFetchStatus.textContent = `正在请求 ${new URL(endpoint).pathname}`;
+      },
+    });
+    populateModelOptions(models);
+    saveCachedModels(config.baseUrl, models);
     if (!elements.apiModel.value && models.length === 1) {
       elements.apiModel.value = models[0];
     }
     rememberApiConfig(apiConfig());
     elements.apiModel.focus();
+    elements.modelFetchStatus.textContent = `已缓存 ${models.length} 个模型，下次可直接选择`;
     showToast(`已拉取 ${models.length} 个模型，可输入或选择`);
   } catch (error) {
-    showError(
-      error instanceof Error
-        ? `拉取模型失败：${error.message}`
-        : "拉取模型失败，请检查接口设置。",
-    );
+    const cached = readCachedModels(config.baseUrl);
+    if (cached.length) {
+      populateModelOptions(cached);
+      elements.modelFetchStatus.textContent = `实时拉取失败，已恢复上次缓存的 ${cached.length} 个模型`;
+      showError("实时模型列表暂时不可用，已载入本地缓存；也可以直接手动填写模型名。");
+      showToast(`已使用缓存的 ${cached.length} 个模型`);
+    } else {
+      elements.modelFetchStatus.textContent = "仍可直接手动填写模型名并开始转换";
+      showError(
+        error instanceof Error
+          ? `拉取模型失败：${error.message}`
+          : "拉取模型失败，请检查接口设置。",
+      );
+    }
   } finally {
     elements.fetchModels.disabled = false;
     elements.fetchModels.textContent = "拉取模型";
@@ -443,13 +513,14 @@ async function loadFile(file) {
   try {
     const text = await file.text();
     currentChat = parseChatExport(text, file.name);
-    currentOutput = null;
 
     elements.fileName.textContent = file.name;
     elements.messageCount.textContent = `${currentChat.messages.length} 条消息`;
     elements.fileSummary.hidden = false;
     elements.dropZone.classList.add("has-file");
-    elements.dropTitle.textContent = "文件读取完成";
+    elements.dropTitle.textContent = appendNextChapter
+      ? `第 ${currentProject.chapters.length + 1} 章素材已读取`
+      : "文件读取完成";
     elements.storyTitle.placeholder = currentChat.title;
     elements.userAlias.placeholder = currentChat.metadata.userName || "沿用记录中的名字";
     elements.characterAlias.placeholder =
@@ -466,7 +537,59 @@ async function loadFile(file) {
   }
 }
 
-function displayOutput(output, message = "转换完成，结果已生成") {
+function renderProjectStatus(saved = true) {
+  if (!currentProject?.chapters?.length) {
+    elements.localDraftStatus.hidden = true;
+    elements.nextChapter.hidden = true;
+    elements.newProject.hidden = true;
+    return;
+  }
+  const time = new Date(currentProject.updatedAt);
+  const stamp = Number.isNaN(time.getTime())
+    ? ""
+    : time.toLocaleString("zh-CN", { hour12: false });
+  elements.localDraftStatus.textContent = saved
+    ? `已自动保存在本地 · ${currentProject.chapters.length} 章${stamp ? ` · ${stamp}` : ""}`
+    : `当前有 ${currentProject.chapters.length} 章 · 本地保存失败，请及时下载`;
+  elements.localDraftStatus.hidden = false;
+  elements.nextChapter.textContent = appendNextChapter
+    ? `等待第 ${currentProject.chapters.length + 1} 章素材`
+    : `开始第 ${currentProject.chapters.length + 1} 章`;
+  elements.nextChapter.disabled = appendNextChapter;
+  elements.nextChapter.hidden = false;
+  elements.newProject.hidden = false;
+}
+
+function saveConvertedOutput(output) {
+  currentProject = updateWritingProject(currentProject, output, {
+    append: appendNextChapter,
+  });
+  appendNextChapter = false;
+  let saved = true;
+  try {
+    localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(currentProject));
+  } catch {
+    saved = false;
+  }
+  renderProjectStatus(saved);
+  return writingProjectToOutput(currentProject);
+}
+
+function restoreWritingProject() {
+  try {
+    currentProject = parseStoredProject(localStorage.getItem(PROJECT_STORAGE_KEY));
+  } catch {
+    currentProject = null;
+  }
+  if (!currentProject) return;
+  displayOutput(writingProjectToOutput(currentProject), "已恢复本地作品", {
+    scroll: false,
+  });
+  elements.storyTitle.value = currentProject.title;
+  renderProjectStatus(true);
+}
+
+function displayOutput(output, message = "转换完成，结果已生成", options = {}) {
   currentOutput = output;
   elements.manuscriptTitle.textContent = output.title;
   elements.previewText.textContent = output.body;
@@ -479,14 +602,55 @@ function displayOutput(output, message = "转换完成，结果已生成") {
 
   requestAnimationFrame(() => {
     elements.manuscript.classList.add("reveal");
-    document.querySelector(".preview-card").scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        ? "auto"
-        : "smooth",
-      block: "start",
-    });
+    if (options.scroll !== false) {
+      document.querySelector(".preview-card").scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "start",
+      });
+    }
   });
   showToast(message);
+}
+
+function displayConvertedOutput(output, message) {
+  displayOutput(saveConvertedOutput(output), message);
+}
+
+function resetLoadedChat() {
+  currentChat = null;
+  elements.fileInput.value = "";
+  elements.fileSummary.hidden = true;
+  elements.dropZone.classList.remove("has-file");
+  elements.dropTitle.textContent = "上传下一章的 .jsonl / .json 文件";
+  elements.convertButton.disabled = true;
+}
+
+function prepareNextChapter() {
+  if (!currentProject?.chapters?.length || appendNextChapter) return;
+  appendNextChapter = true;
+  elements.storyTitle.value = currentProject.title;
+  resetLoadedChat();
+  renderProjectStatus(true);
+  document.querySelector(".converter-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  showToast(`请上传第 ${currentProject.chapters.length + 1} 章的 RP 记录`);
+}
+
+function clearWritingProject() {
+  if (!window.confirm("确定新建作品吗？当前本地稿将被清除，请先下载备份。")) return;
+  localStorage.removeItem(PROJECT_STORAGE_KEY);
+  currentProject = null;
+  currentOutput = null;
+  appendNextChapter = false;
+  resetLoadedChat();
+  elements.storyTitle.value = "";
+  elements.previewEmpty.hidden = false;
+  elements.manuscript.hidden = true;
+  elements.previewActions.hidden = true;
+  elements.outputStats.textContent = "尚未生成";
+  renderProjectStatus();
+  showToast("已新建空白作品");
 }
 
 function setProgress(current, total, label) {
@@ -518,7 +682,7 @@ async function convertLocally() {
     userAlias: elements.userAlias.value,
     characterAlias: elements.characterAlias.value,
   });
-  displayOutput(output);
+  displayConvertedOutput(output, "转换完成，已自动保存到本地");
 }
 
 async function convertWithAi() {
@@ -568,6 +732,9 @@ async function convertWithAi() {
   setWorking(true, "AI 正在改写");
 
   const results = [];
+  const previousChapterTail = appendNextChapter
+    ? currentProject?.chapters?.[currentProject.chapters.length - 1]?.body?.slice(-1200) || ""
+    : "";
   for (let index = 0; index < chunks.length; index += 1) {
     let fidelityLedger = "";
     if (elements.strictFidelity.checked) {
@@ -609,7 +776,7 @@ async function convertWithAi() {
           currentCharacterCard?.name ||
           currentChat.metadata.characterName,
       }),
-      continuity: results[index - 1]?.slice(-700) || "",
+      continuity: results[index - 1]?.slice(-700) || (index === 0 ? previousChapterTail : ""),
       fidelityLedger,
     });
     const rawText = await requestChatCompletion(config, messages, {
@@ -627,7 +794,7 @@ async function convertWithAi() {
 
   const title = elements.storyTitle.value.trim() || currentChat.title || "未命名故事";
   const body = results.join("\n\n");
-  displayOutput(
+  displayConvertedOutput(
     {
       title,
       body,
@@ -636,7 +803,7 @@ async function convertWithAi() {
       messageCount: currentChat.messages.length,
       characterCount: body.length,
     },
-    `AI 小说化完成，共处理 ${chunks.length} 段`,
+    `AI 小说化完成，共处理 ${chunks.length} 段，已保存到本地`,
   );
 }
 
@@ -800,6 +967,29 @@ elements.downloadTxt.addEventListener("click", () =>
 elements.downloadMd.addEventListener("click", () =>
   download(currentOutput?.markdown || "", "md", "text/markdown"),
 );
+elements.nextChapter.addEventListener("click", prepareNextChapter);
+elements.newProject.addEventListener("click", clearWritingProject);
+
+[elements.apiBaseUrl, elements.apiKey, elements.apiModel, elements.aiStyle, elements.aiCustomPrompt]
+  .forEach((element) => {
+    const saveField = () => {
+      if (elements.rememberApiConfig.checked) rememberApiConfig(apiConfig());
+      if (element === elements.apiBaseUrl) {
+        const cached = readCachedModels(elements.apiBaseUrl.value);
+        populateModelOptions(cached);
+        elements.modelFetchStatus.textContent = cached.length
+          ? `已载入上次缓存的 ${cached.length} 个模型`
+          : "拉取失败时仍可手动填写；成功列表会缓存在本地";
+      }
+    };
+    element.addEventListener("input", saveField);
+    element.addEventListener("change", saveField);
+  });
+elements.rememberApiConfig.addEventListener("change", () => {
+  rememberApiConfig(apiConfig());
+  showToast(elements.rememberApiConfig.checked ? "API 配置将保存在此设备" : "已停止保存并清除本地 API 配置");
+});
 
 restoreApiConfig();
+restoreWritingProject();
 syncModeUi();

@@ -101,6 +101,17 @@ export function normalizeModelsEndpoint(baseUrl) {
   return url.toString();
 }
 
+export function modelEndpointCandidates(baseUrl) {
+  const primary = new URL(normalizeModelsEndpoint(baseUrl));
+  const candidates = [primary.toString()];
+  for (const pathname of ["/v1/models", "/models"]) {
+    const fallback = new URL(primary.origin);
+    fallback.pathname = pathname;
+    candidates.push(fallback.toString());
+  }
+  return [...new Set(candidates)];
+}
+
 export function createTranscriptChunks(chat, options = {}) {
   const maxChars = Math.max(2000, options.maxChars || DEFAULT_CHUNK_SIZE);
   const removeOoc = options.removeOoc !== false;
@@ -251,6 +262,12 @@ export function extractModelIds(payload) {
       ? payload.data
       : Array.isArray(payload?.models)
         ? payload.models
+        : Array.isArray(payload?.result?.data)
+          ? payload.result.data
+          : Array.isArray(payload?.result?.models)
+            ? payload.result.models
+            : Array.isArray(payload?.result)
+              ? payload.result
         : [];
   const ids = candidates
     .map((item) => {
@@ -306,33 +323,55 @@ export async function requestChatCompletion(config, messages, requestOptions = {
 }
 
 export async function requestModelList(config, requestOptions = {}) {
-  const endpoint = normalizeModelsEndpoint(config.baseUrl);
   const headers = {};
   if (config.apiKey?.trim()) headers.Authorization = `Bearer ${config.apiKey.trim()}`;
+  const endpoints = modelEndpointCandidates(config.baseUrl);
+  const fetchImpl = requestOptions.fetchImpl || fetch;
+  const timeoutMs = Math.max(1000, requestOptions.timeoutMs || 8000);
+  const failures = [];
 
-  let response;
-  try {
-    response = await (requestOptions.fetchImpl || fetch)(endpoint, {
-      method: "GET",
-      headers,
-      signal: requestOptions.signal,
-    });
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    throw new Error(
-      "无法拉取模型。请检查 Base URL，并确认中转或反代允许浏览器跨域访问（CORS）。",
-    );
+  for (let index = 0; index < endpoints.length; index += 1) {
+    const endpoint = endpoints[index];
+    requestOptions.onAttempt?.({ endpoint, index, total: endpoints.length });
+    const controller = new AbortController();
+    let timedOut = false;
+    const relayAbort = () => controller.abort(requestOptions.signal?.reason);
+    if (requestOptions.signal?.aborted) relayAbort();
+    else requestOptions.signal?.addEventListener("abort", relayAbort, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    try {
+      const response = await fetchImpl(endpoint, {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        // Some proxies return an empty or non-JSON error body.
+      }
+      if (!response.ok) {
+        failures.push(`${new URL(endpoint).pathname}: ${apiErrorMessage(payload, response.status)}`);
+        continue;
+      }
+      const models = extractModelIds(payload);
+      if (models.length) return models;
+      failures.push(`${new URL(endpoint).pathname}: 没有可识别的模型`);
+    } catch (error) {
+      if (requestOptions.signal?.aborted) throw error;
+      failures.push(
+        `${new URL(endpoint).pathname}: ${timedOut ? "请求超时" : "连接失败或被 CORS 拦截"}`,
+      );
+    } finally {
+      clearTimeout(timeout);
+      requestOptions.signal?.removeEventListener("abort", relayAbort);
+    }
   }
 
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    // Some proxies return an empty or non-JSON error body.
-  }
-
-  if (!response.ok) throw new Error(apiErrorMessage(payload, response.status));
-  const models = extractModelIds(payload);
-  if (!models.length) throw new Error("接口已响应，但没有返回可识别的模型列表。");
-  return models;
+  throw new Error(`已尝试 ${endpoints.length} 个模型地址，均未成功。${failures.join("；")}`);
 }
