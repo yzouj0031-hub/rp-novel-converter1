@@ -33,7 +33,8 @@ const PROHIBITED_PATTERNS = [
 
 const SENSITIVE_PATTERNS = [
   /nsfw/i,
-  /成人向|色情|性爱|性行为|露骨|情色|官能/i,
+  /成人向|色情|性爱|性行为|露骨|情色|官能|黄暴|色色|性器官|性交|高潮/i,
+  /肉棒|龟头|小穴|穴肉|淫水|精液|鸡巴|骚逼/i,
   /(?:sexual|sexually explicit|erotic|pornographic)/i,
 ];
 
@@ -45,6 +46,37 @@ const INTERFACE_PATTERNS = [
   /<\s*(?:status|todo|title|details|potential_errors|character_settings|additional_info)\b/i,
   /(?:输出|生成|返回).{0,18}(?:状态栏|摘要栏|标题标签|HTML|XML标签)/i,
 ];
+
+const ROLEPLAY_RUNTIME_PATTERNS = [
+  /(?:继续|推动|推进|发展).{0,8}(?:剧情|故事)|推剧情|剧情分支|选项/i,
+  /(?:本轮|下轮|每次)(?:回复|输出)|回复长度|字数要求|不抢话|不得扮演|代替.{0,8}(?:user|用户|玩家)/i,
+  /(?:user|用户|玩家).{0,8}(?:身份|第二人称)|assistant.prefill|角色扮演|role.?play/i,
+  /\{\{\s*(?:getvar|setvar|addvar|incvar)|ECoT/i,
+  /果农|乐园|入梦|梦境舞台|小剧场|论坛|开篇序言|推荐语/i,
+  /(?:输出|保留|生成).{0,12}(?:摘要|人物表|角色表|状态栏|变量|分支|选项|小剧场)/i,
+  /<\/?(?:meow_FM|profile|branches|snow|status|content|prologue|novel_header)\b/i,
+  /(?:好|坏|悲|圆满|开放).{0,4}结局|反阴谋/i,
+  /后续发展入口|让\s*(?:user|用户|玩家)\s*决定|正文结尾.{0,24}(?:行动|对话)/i,
+];
+
+function looksLikeStructuralMarker(name, content) {
+  const compact = content.replace(/\s/g, "");
+  return compact.length <= 80 && (
+    /^(?:[-—=_📌⬆️⬇️🍏🍎💤🎭]+|<\/?[\w-]+>)$/u.test(compact) ||
+    /(?:start|end|开始|结束|上方|下方|(?:区|尾).{0,8}$)/i.test(name)
+  );
+}
+
+const NOVEL_STYLE_PATTERNS = [
+  /文风|写作|叙事|视角|语言|措辞|修辞|描写|对白|节奏|氛围|基调/i,
+  /人物|角色|认知|心理|动作|物理|时代感|镜头|白描|冷峻|流动|浓墨|缄默/i,
+  /第一人称|第二人称|第三人称|有限视角|全知视角|小说|正文/i,
+];
+
+function isNovelStylePrompt(name, content) {
+  const sample = `${name}\n${content}`;
+  return NOVEL_STYLE_PATTERNS.some((pattern) => pattern.test(sample));
+}
 
 const REGEX_PLACEMENT = {
   USER_INPUT: 1,
@@ -106,6 +138,9 @@ function classifyPrompt(name, content) {
   }
   if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(sample))) {
     return { category: "sensitive", reason: "成人向写作项" };
+  }
+  if (ROLEPLAY_RUNTIME_PATTERNS.some((pattern) => pattern.test(sample))) {
+    return { category: "incompatible", reason: "RP 续写或附加输出指令，不适用于忠实小说整理" };
   }
   return { category: "safe", reason: "写作与叙事指令" };
 }
@@ -308,7 +343,7 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
   }
 
   const entries = rawEntries.map((entry) => {
-    if (entry.marker || !entry.content) {
+    if (entry.marker || !entry.content || looksLikeStructuralMarker(entry.name, entry.content)) {
       return {
         ...entry,
         originalEnabled: entry.enabled,
@@ -318,12 +353,19 @@ export function parseSillyTavernPreset(text, fileName = "preset.json") {
       };
     }
     const classified = classifyPrompt(entry.name, entry.content);
+    const novelCompatible =
+      classified.category === "safe" && isNovelStylePrompt(entry.name, entry.content);
     return {
       ...entry,
       originalEnabled: entry.enabled,
       ...classified,
-      reason: entry.enabled ? classified.reason : `原预设关闭 · ${classified.reason}`,
-      selected: entry.enabled && classified.category === "safe",
+      novelCompatible,
+      reason: entry.enabled
+        ? novelCompatible || classified.category !== "safe"
+          ? classified.reason
+          : "未识别为小说文风或叙事规则，默认关闭"
+        : `原预设关闭 · ${classified.reason}`,
+      selected: entry.enabled && novelCompatible,
     };
   });
 

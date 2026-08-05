@@ -84,3 +84,13 @@ test("reports invalid or empty exports", () => {
   assert.throws(() => parseChatExport("", "empty.json"), /空/);
   assert.throws(() => parseChatExport("{not json}", "bad.json"), /没有找到|不是有效/);
 });
+
+test("ignores placeholder metadata names and infers speakers", () => {
+  const output = parseChatExport([
+    JSON.stringify({ user_name: "unused", character_name: "unused" }),
+    JSON.stringify({ name: "旅人", is_user: true, mes: "你好" }),
+    JSON.stringify({ name: "沈砚", is_user: false, mes: "久等了" }),
+  ].join("\n"));
+  assert.equal(output.metadata.userName, "旅人");
+  assert.equal(output.metadata.characterName, "沈砚");
+});

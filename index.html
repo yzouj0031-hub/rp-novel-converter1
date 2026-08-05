@@ -199,7 +199,7 @@
                   <ul id="preset-items"></ul>
                 </details>
                 <p class="preset-note">
-                  提示项和文本正则都可单独开关；HTML 美化及删除历史消息类正则仍会跳过。
+                  只自动勾选可识别的小说文风与叙事规则；RP 续写、附加格式和文本正则默认不启用，仍可逐项手动调整。
                 </p>
               </div>
               <div class="context-import-grid wide-field">
@@ -272,6 +272,10 @@
                   rows="3"
                   placeholder="例如：第三人称、保留原对白、不增加心理活动"
                 ></textarea>
+              </label>
+              <label class="compact-check wide-field">
+                <input id="strict-fidelity" type="checkbox" checked />
+                <span>严格保真（推荐）：先逐条提取剧情清单再成稿，减少漏情节；请求次数约增加一倍</span>
               </label>
             </div>
 

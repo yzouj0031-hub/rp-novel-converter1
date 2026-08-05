@@ -23,6 +23,7 @@ const presetJson = JSON.stringify({
     },
     { identifier: "cot", name: "CoT", content: "展示完整思维链。" },
     { identifier: "status", name: "手记状态栏", content: "输出 <status>状态</status>。" },
+    { identifier: "runtime", name: "推剧情", content: "每次回复继续推进剧情并给出选项。" },
     { identifier: "history", name: "Chat History", marker: true, content: "" },
   ],
   prompt_order: [
@@ -36,6 +37,7 @@ const presetJson = JSON.stringify({
         { identifier: "disguised", enabled: true },
         { identifier: "cot", enabled: true },
         { identifier: "status", enabled: true },
+        { identifier: "runtime", enabled: true },
         { identifier: "history", enabled: true },
       ],
     },
@@ -102,13 +104,13 @@ test("parses enabled SillyTavern preset items and classifies imports", () => {
   assert.equal(preset.safeCount, 2);
   assert.equal(preset.sensitiveCount, 1);
   assert.equal(preset.blockedCount, 3);
-  assert.equal(preset.incompatibleCount, 1);
+  assert.equal(preset.incompatibleCount, 2);
   assert.equal(preset.disabledCount, 1);
   assert.equal(preset.regexActiveCount, 2);
   assert.equal(preset.regexSkippedCount, 3);
   assert.deepEqual(
     presetEntrySummary(preset).map((item) => item.category),
-    ["safe", "safe", "sensitive", "blocked", "blocked", "blocked", "incompatible"],
+    ["safe", "safe", "sensitive", "blocked", "blocked", "blocked", "incompatible", "incompatible"],
   );
   assert.deepEqual(
     presetRegexSummary(preset).map((item) => item.category),

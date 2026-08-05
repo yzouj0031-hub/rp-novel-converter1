@@ -1,5 +1,6 @@
 import {
   buildNovelMessages,
+  buildFidelityLedgerMessages,
   createTranscriptChunks,
   requestChatCompletion,
   requestModelList,
@@ -41,6 +42,7 @@ const elements = {
   fetchModels: document.querySelector("#fetch-models"),
   aiStyle: document.querySelector("#ai-style"),
   aiCustomPrompt: document.querySelector("#ai-custom-prompt"),
+  strictFidelity: document.querySelector("#strict-fidelity"),
   presetInput: document.querySelector("#preset-input"),
   importPreset: document.querySelector("#import-preset"),
   presetSummary: document.querySelector("#preset-summary"),
@@ -232,7 +234,7 @@ async function loadPreset(file) {
   elements.importPreset.textContent = "正在读取…";
   try {
     currentPreset = parseSillyTavernPreset(await file.text(), file.name);
-    elements.applyPresetRegexInput.checked = currentPreset.regexActiveCount > 0;
+    elements.applyPresetRegexInput.checked = false;
     renderPresetSummary();
     showToast(`已导入预设：${currentPreset.name}`);
   } catch (error) {
@@ -567,6 +569,19 @@ async function convertWithAi() {
 
   const results = [];
   for (let index = 0; index < chunks.length; index += 1) {
+    let fidelityLedger = "";
+    if (elements.strictFidelity.checked) {
+      setProgress(index, chunks.length, `正在核对第 ${index + 1} 段剧情`);
+      fidelityLedger = await requestChatCompletion(
+        config,
+        buildFidelityLedgerMessages({
+          chunk: chunks[index],
+          chunkIndex: index,
+          chunkCount: chunks.length,
+        }),
+        { signal: activeController.signal },
+      );
+    }
     setProgress(index, chunks.length, `正在改写第 ${index + 1} 段`);
     const messages = buildNovelMessages({
       chunk: chunks[index],
@@ -595,6 +610,7 @@ async function convertWithAi() {
           currentChat.metadata.characterName,
       }),
       continuity: results[index - 1]?.slice(-700) || "",
+      fidelityLedger,
     });
     const rawText = await requestChatCompletion(config, messages, {
       signal: activeController.signal,
