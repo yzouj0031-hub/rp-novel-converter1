@@ -5,7 +5,10 @@ const OOC_LINE_PATTERNS = [
 ];
 
 function firstString(...values) {
-  return values.find((value) => typeof value === "string" && value.trim())?.trim() || "";
+  return values.find((value) => {
+    if (typeof value !== "string" || !value.trim()) return false;
+    return !/^(?:unused|unknown|null|undefined|n\/a)$/i.test(value.trim());
+  })?.trim() || "";
 }
 
 function contentToString(content) {
@@ -123,6 +126,7 @@ export function parseChatExport(rawText, fileName = "chat.jsonl") {
 
   const records = findRecordArray(source);
   const metadata = collectMetadata(source, records);
+  let fallbackUser = metadata.userName;
   let fallbackCharacter = metadata.characterName;
 
   const messages = records
@@ -135,6 +139,7 @@ export function parseChatExport(rawText, fileName = "chat.jsonl") {
         record.is_system === true || role === "system" || String(record.name || "").toLowerCase() === "system";
 
       const inferredName = firstString(record.name, record.speaker, record.author);
+      if (isUser && inferredName && !fallbackUser) fallbackUser = inferredName;
       if (!isUser && !isSystem && inferredName && !fallbackCharacter) fallbackCharacter = inferredName;
 
       return {
@@ -163,6 +168,7 @@ export function parseChatExport(rawText, fileName = "chat.jsonl") {
     title: fileName.replace(/\.(jsonl?|ndjson)$/i, ""),
     metadata: {
       ...metadata,
+      userName: metadata.userName || fallbackUser,
       characterName: metadata.characterName || fallbackCharacter,
     },
     messages,
